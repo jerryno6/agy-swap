@@ -14,9 +14,12 @@ import (
 
 type tuiKeyEvent struct{ key string }
 type tuiAccountsEvent struct {
-	accounts    *Accounts
-	quotaErrors map[string]string
-	revision    uint64
+	accounts     *Accounts
+	quotaErrors  map[string]string
+	revision     uint64
+	sessionToken string
+	secureToken  string
+	oauthToken   string
 }
 type tuiActiveEvent struct {
 	token string
@@ -165,6 +168,12 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		}
 		refreshRevision++
 		revision := refreshRevision
+		sessionToken := current
+		var secureToken, oauthToken string
+		if a.credentials != nil {
+			secureToken = a.credentials.Secure(ctx)
+			oauthToken = a.credentials.OAuthToken()
+		}
 		refreshing = true
 		state.refreshing = true
 		state.beginAnimation("refresh", 0)
@@ -179,7 +188,14 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				errs["store"] = loadErr.Error()
 			}
 			select {
-			case events <- tuiAccountsEvent{accounts: fresh, quotaErrors: errs, revision: revision}:
+			case events <- tuiAccountsEvent{
+				accounts:     fresh,
+				quotaErrors:  errs,
+				revision:     revision,
+				sessionToken: sessionToken,
+				secureToken:  secureToken,
+				oauthToken:   oauthToken,
+			}:
 			case <-workerCtx.Done():
 			}
 		}()
@@ -566,7 +582,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	runAction := func(id string) {
 		if a.demo {
 			switch id {
-			case "dashboard", "quota", "profiles", "history", "settings", "help", "quit", "switch-account", "refresh", "edit-tags", "toggle-tier", "profile-create", "profile-edit", "profile-remove", "history-clear", "settings-edit", "settings-reset", "alias-create", "split-widen", "split-narrow", "split-reset":
+			case "dashboard", "quota", "profiles", "history", "settings", "help", "quit", "switch-account", "refresh", "edit-tags", "toggle-tier", "profile-create", "profile-edit", "profile-remove", "history-clear", "settings-edit", "settings-reset", "alias-create", "split-widen", "split-narrow", "split-reset", "toggle-auto-next":
 			default:
 				demoNotice()
 				return
@@ -618,6 +634,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		case "refresh":
 			state.message, state.messageType = "Refreshing quota…", "info"
 			startRefresh(true)
+		case "toggle-auto-next":
+			if a.toggleAutoNext(state) {
+				armFrame()
+			}
 		case "edit-tags":
 			a.beginTUIForm(state, "tags")
 		case "toggle-tier":
@@ -724,6 +744,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					state.beginAnimation("success", 360*time.Millisecond)
 				}
 				startActiveResolve()
+				current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
 				a.renderTUI(state, outFile)
 				armFrame()
 			case tuiActiveEvent:
@@ -981,8 +1002,12 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					} else {
 						toggleTier()
 					}
-				case "n":
-					suspend(func() int { return a.cmdNext(ctx, cliArgs{}) })
+				case "n", "shift-n":
+					if value.key == "N" || value.key == "shift-n" {
+						runAction("toggle-auto-next")
+					} else {
+						suspend(func() int { return a.cmdNext(ctx, cliArgs{}) })
+					}
 				case "l":
 					suspend(func() int { return a.cmdLogout(ctx) })
 				case "enter":

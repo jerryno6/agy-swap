@@ -191,9 +191,66 @@ func (a *Application) tuiHeaderLinesWithVersion(version string, state *tuiState,
 	}
 	content := left + strings.Repeat(" ", gap) + right
 	return []string{
-		a.p.Gray + "╭" + strings.Repeat("─", g.frameWidth-2) + "╮" + a.p.Reset,
+		a.tuiTopBorder(state, g),
 		frameRow(content, g, a.p),
 	}
+}
+
+func (a *Application) tuiTopBorder(state *tuiState, g tuiGeometry) string {
+	on := state != nil && state.autoNextEnabled()
+	badgeText := "AUTO-NEXT: OFF [N]"
+	badgeColor := a.p.Gray
+	if on {
+		badgeText = "AUTO-NEXT: ON [N]"
+		badgeColor = a.p.Green
+	}
+	bw := visibleWidth(badgeText)
+	avail := maxInt(0, g.frameWidth-2)
+
+	if avail < bw {
+		truncated := fitVisible(badgeText, avail, a.p)
+		return a.p.Gray + "╭" + a.p.Reset + badgeColor + truncated + a.p.Reset + a.p.Gray + "╮" + a.p.Reset
+	}
+
+	useSpaces := avail >= bw+2
+	contentWidth := bw
+	if useSpaces {
+		contentWidth += 2
+	}
+	remDashes := avail - contentWidth
+
+	rightDashes := 0
+	if remDashes >= 2 {
+		rightDashes = 2
+	} else if remDashes == 1 {
+		rightDashes = 1
+	}
+	leftDashes := remDashes - rightDashes
+
+	var b strings.Builder
+	b.WriteString(a.p.Gray)
+	b.WriteString("╭")
+	if leftDashes > 0 {
+		b.WriteString(strings.Repeat("─", leftDashes))
+	}
+	if useSpaces {
+		b.WriteString(" ")
+	}
+	b.WriteString(a.p.Reset)
+	b.WriteString(badgeColor)
+	b.WriteString(badgeText)
+	b.WriteString(a.p.Reset)
+	b.WriteString(a.p.Gray)
+	if useSpaces {
+		b.WriteString(" ")
+	}
+	if rightDashes > 0 {
+		b.WriteString(strings.Repeat("─", rightDashes))
+	}
+	b.WriteString("╮")
+	b.WriteString(a.p.Reset)
+
+	return b.String()
 }
 
 func (a *Application) displayVersion() string {
@@ -821,6 +878,7 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"a           Add account",
 		"d           Delete selected account",
 		"n           Choose next available account",
+		"N (Shift+N) Toggle auto-next (5h < 15% or weekly < 8%)",
 		"t           Toggle manual tier",
 		"m           Move tokens into the vault",
 		"l           Log out",

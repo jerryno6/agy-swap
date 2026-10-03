@@ -87,6 +87,7 @@ The layout follows your terminal size:
 | `Enter` | Switch to the highlighted account |
 | `1` – `9` | Select an account by number; press Enter to switch |
 | `n` | Refresh and move to the next eligible account |
+| `N` / `Shift+N` | Toggle auto-next when quota drops below threshold |
 | `/` | Filter accounts by name or email |
 | `Ctrl-K` or `:` | Open the command palette |
 | `r` | Refresh quota in the background |
@@ -226,6 +227,18 @@ agy-swap backup import agy-swap-backup.json --merge
 `sticky` prefers the active account (or profile primary), `balanced` favors remaining capacity, and `round-robin` advances through saved order. Profile reserves are fallback candidates when the primary is unavailable. `next` advances rotation even with sticky policy. `watch --account` limits polling to that account; `watch --profile` uses its primary and notification threshold.
 
 Bindings take effect in `run now`, not when a shell merely changes directory. `--account` overrides a binding. Recommend mode prints a suggestion, prompt mode asks in a terminal, and auto mode requires `policy.allow_apply=true`. These profiles update one shared local Antigravity session; they do not isolate simultaneous processes. Targets launch executables and do not translate Google credentials into credentials for other providers.
+
+### Auto-next in the terminal UI
+
+In interactive mode, agy-swap can automatically rotate to the next healthy account when your active account runs low on quota:
+
+- **Default state:** OFF by default (`AUTO-NEXT: OFF [N]`).
+- **Persisted choice:** Toggling auto-next with `Shift+N` (`N`), the command palette (`Ctrl-K` → `Toggle auto-next`), or through Settings (`s` → `e` → `ui.auto_next`) persists the choice across sessions in `config.json`.
+- **Always visible badge:** The top frame border permanently displays `AUTO-NEXT: ON [N]` in green or `AUTO-NEXT: OFF [N]` in gray across every view and overlay, even in compact 28x12 terminals.
+- **Refresh trigger:** Auto-next is evaluated immediately after a successful quota refresh (either the 60-second periodic background sync or a manual `r` refresh).
+- **Strict OR boundaries:** Auto-switch triggers only when the active account's remaining capacity drops strictly below 15% on the 5-hour rolling window (`5h < 15%`) OR strictly below 8% on the weekly window (`weekly < 8%`). Equal or higher capacity does not trigger rotation.
+- **Safe switching:** Candidate selection skips accounts in cooldown, stale snapshots (>2 minutes), refresh errors, and accounts that are also below thresholds. The switch executes atomically under a session lock (`.session.lock`), preserving active session safety.
+- **Settings display mode:** The current auto-next mode is displayed in the Settings view (`s`) and editable via the settings form.
 
 ## Security and privacy
 

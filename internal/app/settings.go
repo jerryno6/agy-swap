@@ -77,7 +77,8 @@ type TargetConfig struct {
 }
 
 type UIConfig struct {
-	SplitOffset int `json:"split_offset,omitempty"`
+	SplitOffset int  `json:"split_offset,omitempty"`
+	AutoNext    bool `json:"auto_next,omitempty"`
 }
 
 func defaultSettings() AppSettings {

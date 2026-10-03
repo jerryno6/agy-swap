@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (a *Application) applyTUIForm(ctx context.Context, state *tuiState) (string, error) {
@@ -90,6 +91,8 @@ func (a *Application) applyTUIForm(ctx context.Context, state *tuiState) (string
 		if err := a.store.SaveSettings(settings); err != nil {
 			return "", err
 		}
+		state.settings = settings
+		state.settingsLoaded = true
 		return "Settings saved", nil
 
 	case "alias":
@@ -275,4 +278,185 @@ func (a *Application) tuiVerifyBackup(path, passphrase string) (string, error) {
 		return "", err
 	}
 	return "Backup is valid", nil
+}
+
+// toggleAutoNext toggles the auto_next setting via store.UpdateSettings,
+// updating in-memory state only upon successful persistence.
+func (a *Application) toggleAutoNext(state *tuiState) bool {
+	if a == nil || a.store == nil || state == nil {
+		return false
+	}
+	if state.job != nil && !state.job.Done {
+		return false
+	}
+	updated, err := a.store.UpdateSettings(func(s *AppSettings) error {
+		s.UI.AutoNext = !s.UI.AutoNext
+		return nil
+	})
+	if err != nil {
+		state.showToast("Could not update auto-next: "+err.Error(), "error")
+		return false
+	}
+	state.settings = updated
+	state.settingsLoaded = true
+	if updated.UI.AutoNext {
+		state.showToast("Auto-next enabled", "success")
+	} else {
+		state.showToast("Auto-next disabled", "info")
+	}
+	return true
+}
+
+// handleAutoNext evaluates whether the active account has dropped below quota thresholds
+// and safely executes a session switch to the best eligible candidate under SessionLock.
+func (a *Application) handleAutoNext(
+	ctx context.Context,
+	state *tuiState,
+	event tuiAccountsEvent,
+	current string,
+	refreshRevision uint64,
+	now time.Time,
+) string {
+	if a == nil || a.store == nil || a.credentials == nil || state == nil || event.accounts == nil {
+		return current
+	}
+	// Disabled in live demo mode
+	if a.demo {
+		return current
+	}
+	// Stale revision: slower refresh must never trigger auto-apply
+	if event.revision != refreshRevision {
+		return current
+	}
+	// AutoNext must be ON at completion
+	if !state.settings.UI.AutoNext {
+		return current
+	}
+	// Skip and reconsider next refresh when busy or not in normal browse mode
+	if state.mode != tuiBrowse || (state.job != nil && !state.job.Done) || state.form != nil {
+		return current
+	}
+	// Session identity changed since refresh started: protect manual/external switch
+	if event.sessionToken == "" || event.sessionToken != current {
+		return current
+	}
+	// Do not act on cached old failures, store/storage error
+	if hasQuotaError(event.quotaErrors, "store") || hasQuotaError(event.quotaErrors, "storage") {
+		return current
+	}
+
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+
+	// Active account identity
+	activeEmail := state.active
+	if activeEmail == "" {
+		activeEmail = a.activeHint(event.accounts, current)
+	}
+	if activeEmail == "" && a.credentials != nil {
+		activeEmail = a.credentials.StoredActiveEmail()
+	}
+	if activeEmail == "" {
+		return current
+	}
+	activeAccount := findAccountCaseInsensitive(event.accounts, activeEmail)
+	if activeAccount == nil {
+		return current
+	}
+
+	// Fresh successful active response required: no refresh error on active account
+	if hasQuotaError(event.quotaErrors, activeEmail) {
+		return current
+	}
+
+	// Fresh snapshot required
+	if !isSnapshotFresh(activeAccount, now) {
+		return current
+	}
+
+	// Active account quota must be below threshold (5h < 15% OR weekly < 8%)
+	if !ShouldAutoNext(activeAccount, now) {
+		return current
+	}
+
+	// Select best eligible candidate (excludes active, cooldowns, errors, stale, below-threshold)
+	candidateAccount, ok := SelectAutoNextCandidate(event.accounts, activeEmail, state.settings, event.quotaErrors, now)
+	if !ok {
+		// No eligible candidate retains current with concise info
+		state.showToast("No eligible auto-next account", "info")
+		return current
+	}
+	candidateEmail := getString(candidateAccount, "email")
+	if candidateEmail == "" {
+		state.showToast("No eligible auto-next account", "info")
+		return current
+	}
+
+	// Short native transaction under SessionLock
+	lock, err := acquireFileLock(a.paths.SessionLock)
+	if err != nil {
+		state.showToast("Auto-switch failed: "+err.Error(), "error")
+		return current
+	}
+	defer func() { _ = lock.Close() }()
+
+	// Recheck exact identity under SessionLock before applying, protecting concurrent/external switches
+	nowSession := a.credentials.Current(ctx)
+	if nowSession != event.sessionToken || nowSession != current {
+		return current
+	}
+	if a.credentials.Secure(ctx) != event.secureToken {
+		return current
+	}
+	if a.credentials.OAuthToken() != event.oauthToken {
+		return current
+	}
+
+	token, tokenErr := a.accountToken(ctx, candidateAccount)
+	if tokenErr != nil {
+		state.showToast("Auto-switch failed: "+tokenErr.Error(), "error")
+		return current
+	}
+
+	// Reuse applyUnlocked rollback behavior
+	if !a.credentials.applyUnlocked(ctx, token, candidateEmail) {
+		state.showToast("Auto-switch failed", "error")
+		return current
+	}
+
+	// Record switch in history once
+	a.recordSwitch(candidateEmail)
+
+	// Update current, active, state.current, selection consistently on success
+	current = a.credentials.Current(ctx)
+	if current == "" {
+		current = token
+	}
+	state.current = current
+	state.active = candidateEmail
+	state.selectedEmail = candidateEmail
+	state.resolvingToken = ""
+	state.clampSelection()
+	state.showToast("Auto-switched to "+candidateEmail, "success")
+	state.beginAnimation("success", 360*time.Millisecond)
+
+	return current
+}
+
+func findAccountCaseInsensitive(accounts *Accounts, email string) Account {
+	if accounts == nil || email == "" {
+		return nil
+	}
+	if acc, ok := accounts.ByEmail[email]; ok {
+		return acc
+	}
+	for k, acc := range accounts.ByEmail {
+		if strings.EqualFold(k, email) {
+			return acc
+		}
+	}
+	return nil
 }

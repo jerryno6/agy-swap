@@ -349,3 +349,7 @@ func (s *tuiState) adjustSplit(delta int) {
 func (s *tuiState) resetSplit() {
 	s.splitOffset = 0
 }
+
+func (s *tuiState) autoNextEnabled() bool {
+	return s != nil && s.settings.UI.AutoNext
+}

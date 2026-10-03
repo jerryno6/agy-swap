@@ -39,10 +39,25 @@ func NewCredentials(paths Paths) *Credentials {
 	return &Credentials{paths: paths, backend: osCredentialBackend{}}
 }
 
-func (c *Credentials) Secure(ctx context.Context) string { return c.backend.Get(ctx) }
+func (c *Credentials) Secure(ctx context.Context) string {
+	if c == nil || c.backend == nil {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.backend.Get(ctx)
+}
+
+func (c *Credentials) OAuthToken() string {
+	if c == nil {
+		return ""
+	}
+	return c.readOAuthToken()
+}
 
 func (c *Credentials) Current(ctx context.Context) string {
-	if token := c.readOAuthToken(); token != "" {
+	if token := c.OAuthToken(); token != "" {
 		return token
 	}
 	return c.Secure(ctx)
@@ -69,6 +84,9 @@ func (c *Credentials) Set(ctx context.Context, token string) bool {
 func (c *Credentials) Delete(ctx context.Context) bool { return c.backend.Delete(ctx) }
 
 func (c *Credentials) readOAuthToken() string {
+	if c == nil {
+		return ""
+	}
 	data, err := os.ReadFile(c.paths.OAuthToken)
 	if err != nil {
 		return ""
@@ -229,7 +247,7 @@ func (c *Credentials) deleteOAuthFiles() bool {
 func (c *Credentials) clearUnlocked(ctx context.Context) bool {
 	_ = c.Delete(ctx)
 	_ = c.deleteOAuthFiles()
-	return c.Secure(ctx) == "" && c.readOAuthToken() == ""
+	return c.Secure(ctx) == "" && c.OAuthToken() == ""
 }
 func (c *Credentials) Clear(ctx context.Context) bool {
 	lock, err := acquireFileLock(c.paths.SessionLock)

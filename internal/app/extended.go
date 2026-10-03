@@ -600,6 +600,12 @@ func setConfigValue(settings *AppSettings, key, value string) error {
 			return err
 		}
 		settings.UI.SplitOffset = parsed
+	case "ui.auto_next", "auto_next":
+		parsed, err := parseBool()
+		if err != nil {
+			return err
+		}
+		settings.UI.AutoNext = parsed
 	default:
 		return fmt.Errorf("unknown configuration key %q", key)
 	}
@@ -1000,6 +1006,10 @@ func (a *Application) buildRecommendations(ctx context.Context, accounts *Accoun
 	if a.credentials != nil {
 		active = a.activeEmail(ctx, accounts, a.credentials.Current(ctx))
 	}
+	return rankRecommendations(accounts, settings, active, profileName, family, tag, time.Now().UTC())
+}
+
+func rankRecommendations(accounts *Accounts, settings AppSettings, active, profileName, family, tag string, now time.Time) []recommendation {
 	policy := settings.Policy.Name
 	profile, hasProfile := settings.Profiles[profileName]
 	if hasProfile {
@@ -1014,7 +1024,9 @@ func (a *Application) buildRecommendations(ctx context.Context, accounts *Accoun
 		family = settings.Policy.PreferFamily
 	}
 	result := make([]recommendation, 0, accounts.Len())
-	now := time.Now().UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	activeIndex := -1
 	for i, email := range accounts.Order {
 		if strings.EqualFold(email, active) {
