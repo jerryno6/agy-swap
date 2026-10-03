@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0
+
+- Local release with the Windows account-switch fixes and portable test suite from 2.10.1.
+
 ## 2.10.1
 
 - Windows: normalize active-session OAuth credentials to fit Credential Manager, preserving the latest ID token and exact rollback snapshots.
