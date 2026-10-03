@@ -16,12 +16,32 @@ type storyFrameSet struct {
 	Frames  map[string]map[string][]string `json:"frames"`
 }
 
+// TestTUIStoryFrames always exercises every story scene and terminal layout.
+func TestTUIStoryFrames(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	renderTUIStoryFrames(t, "test-version")
+}
+
 // The website's still frames are produced by the same renderer as the live TUI.
 // Run AGY_SWAP_UPDATE_STORY_FRAMES=1 go test ./internal/app -run TestSiteStoryFrames
 // after changing the TUI renderer or demo data.
 func TestSiteStoryFrames(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	siteDir := filepath.Join("..", "..", "site")
+	info, err := os.Stat(siteDir)
+	if os.IsNotExist(err) {
+		if os.Getenv("AGY_SWAP_UPDATE_STORY_FRAMES") == "1" {
+			t.Fatalf("cannot regenerate story frames: site directory %s is missing", siteDir)
+		}
+		t.Skip("optional site fixture directory is absent")
+	}
+	if err != nil {
+		t.Fatalf("stat site directory: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("site path %s is not a directory", siteDir)
+	}
+
 	packageData, err := os.ReadFile(filepath.Join(siteDir, "package.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -35,8 +55,31 @@ func TestSiteStoryFrames(t *testing.T) {
 	if manifest.Version == "" {
 		t.Fatal("site package version is empty")
 	}
+
+	data := renderTUIStoryFrames(t, manifest.Version)
+	fixturePath := filepath.Join(siteDir, "src", "generated", "tui-story-frames.json")
+	if os.Getenv("AGY_SWAP_UPDATE_STORY_FRAMES") == "1" {
+		if mkdirErr := os.MkdirAll(filepath.Dir(fixturePath), 0o755); mkdirErr != nil {
+			t.Fatal(mkdirErr)
+		}
+		if writeErr := os.WriteFile(fixturePath, data, 0o644); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		return
+	}
+	committed, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, committed) {
+		t.Fatal("site TUI frames differ from the Go renderer; regenerate with AGY_SWAP_UPDATE_STORY_FRAMES=1 go test ./internal/app -run TestSiteStoryFrames")
+	}
+}
+
+func renderTUIStoryFrames(t *testing.T, version string) []byte {
+	t.Helper()
 	clock := time.Date(2026, time.September, 29, 12, 0, 0, 0, time.UTC)
-	application, err := NewDemo(manifest.Version, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, DemoOptions{Home: t.TempDir(), Now: clock})
+	application, err := NewDemo(version, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, DemoOptions{Home: t.TempDir(), Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +89,7 @@ func TestSiteStoryFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames := storyFrameSet{Version: manifest.Version, Frames: map[string]map[string][]string{}}
+	frames := storyFrameSet{Version: version, Frames: map[string]map[string][]string{}}
 	for _, scene := range []string{"hero", "accounts", "quota", "switch"} {
 		frames.Frames[scene] = map[string][]string{}
 		for layout, size := range map[string]struct{ width, height int }{
@@ -104,21 +147,5 @@ func TestSiteStoryFrames(t *testing.T) {
 	if bytes.Contains(data, []byte("demo-only")) || strings.Contains(string(data), "go-keyring-base64") {
 		t.Fatal("story frames contain a demo credential")
 	}
-	fixturePath := filepath.Join(siteDir, "src", "generated", "tui-story-frames.json")
-	if os.Getenv("AGY_SWAP_UPDATE_STORY_FRAMES") == "1" {
-		if mkdirErr := os.MkdirAll(filepath.Dir(fixturePath), 0o755); mkdirErr != nil {
-			t.Fatal(mkdirErr)
-		}
-		if writeErr := os.WriteFile(fixturePath, data, 0o644); writeErr != nil {
-			t.Fatal(writeErr)
-		}
-		return
-	}
-	committed, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(data, committed) {
-		t.Fatal("site TUI frames differ from the Go renderer; regenerate with AGY_SWAP_UPDATE_STORY_FRAMES=1 go test ./internal/app -run TestSiteStoryFrames")
-	}
+	return data
 }

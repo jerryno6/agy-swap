@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,9 @@ import (
 )
 
 func TestLiveNativeTUISwitchAndCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("live native TUI requires Unix PTY support; creack/pty has no Windows implementation")
+	}
 	binary := filepath.Join(t.TempDir(), "agy-swap-demo")
 	build := exec.Command("go", "build", "-o", binary, "../../cmd/agy-swap-demo")
 	if output, err := build.CombinedOutput(); err != nil {

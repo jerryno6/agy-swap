@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -286,12 +287,29 @@ func TestAtomicExportPreservesParentPermissions(t *testing.T) {
 	if err := os.Chmod(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat parent before export: %v", err)
+	}
+	if runtime.GOOS != "windows" && before.Mode().Perm() != 0755 {
+		t.Fatalf("fixture permissions = %v, want 0755", before.Mode())
+	}
 	if err := atomicWrite(filepath.Join(dir, "export.json"), []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	info, _ := os.Stat(dir)
-	if info.Mode().Perm() != 0755 {
-		t.Fatalf("parent permissions changed: %v", info.Mode())
+	after, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat parent after export: %v", err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("parent permissions changed from %v to %v", before.Mode(), after.Mode())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "export.json"))
+	if err != nil {
+		t.Fatalf("export is not readable: %v", err)
+	}
+	if string(got) != "{}" {
+		t.Fatalf("export contents = %q, want {}", got)
 	}
 }
 
