@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.1
+
+- Windows: normalize active-session OAuth credentials to fit Credential Manager, preserving the latest ID token and exact rollback snapshots.
+- Windows: reject failed secure-session writes instead of reporting a successful file-only switch.
+- Tests: keep POSIX permission assertions platform-aware, validate story rendering without optional site fixtures, and account for unsupported Windows PTY sessions.
+
 ## 2.10.0
 
 - TUI: unified operator deck redesign with TrueColor palette engine, rounded container borders (`╭─╮`, `╰─╯`), brand pill header, active capsule, and pill keycaps footer.
