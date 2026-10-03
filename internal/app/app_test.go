@@ -1070,6 +1070,25 @@ func TestCredentialFilesAndTransactionalRollback(t *testing.T) {
 	}
 }
 
+func TestCredentialApplyKeepsFileFallbackForNonPreparingBackends(t *testing.T) {
+	paths := testPaths(t)
+	backend := &fakeCredentialBackend{failSet: true}
+	credentials := NewCredentials(paths)
+	credentials.backend = backend
+	token := tokenBlob(t, "user@example.com", true, "r", time.Now().Add(time.Hour))
+	if !credentials.Apply(context.Background(), token, "user@example.com") {
+		t.Fatal("non-preparing backend lost the existing OAuth file fallback")
+	}
+	if backend.token != "" {
+		t.Fatal("failing backend unexpectedly stored a secure credential")
+	}
+	for _, path := range []string{paths.OAuthToken, paths.OAuthCredentials, paths.GoogleAccounts} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("OAuth fallback did not create %s: %v", path, err)
+		}
+	}
+}
+
 func TestCLIParsingLegacyAndSubcommands(t *testing.T) {
 	cases := []struct {
 		argv                     []string
