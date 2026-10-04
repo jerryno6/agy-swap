@@ -3,10 +3,20 @@
 ## 3.1.1
 
 - TUI: adjust auto-refresh interval to 300s.
+- TUI: merged upstream v2.11.0 features (partitioned accounts into `READY` / `ATTENTION REQUIRED`, interactive resizable split view, mouse divider drag & wheel navigation).
+- TUI: auto-next after quota refresh with persistent toggle (`N` / Shift+N).
 
 ## 3.1.0
 
 - Local release with the Windows account-switch fixes and portable test suite from 2.10.1.
+
+## 2.11.0
+
+- TUI: partitioned accounts into `READY` and `ATTENTION REQUIRED` sections with warning marker (`⚠`), token health status override, and repair guidance in account detail.
+- TUI: interactive split resizing: drag the vertical divider (`│`) with mouse in real time, double-click divider to reset, and navigate accounts via mouse wheel.
+- TUI: discoverable split controls with `+`, `-`, `[`, `]`, `alt-left`, `alt-right`, and footer keycaps indicator `[[]/[]] Resize` in wide layout.
+- TUI: 0ms vault token check on startup to partition missing vault credentials without waiting for background network quota refresh.
+- TUI: wider default left accounts table proportion (46%, min 48 columns) preventing quota meter truncation on standard viewports.
 
 ## 2.10.1
 
