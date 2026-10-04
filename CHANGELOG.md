@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.1
+
+- TUI: adjust auto-refresh interval to 300s.
+
 ## 3.1.0
 
 - Local release with the Windows account-switch fixes and portable test suite from 2.10.1.

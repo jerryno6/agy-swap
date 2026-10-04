@@ -16,8 +16,8 @@ const (
 	stateSchema      = 1
 	historySchema    = 1
 	maxHistoryBytes  = 8 * 1024 * 1024
-	quotaCache       = 60 * time.Second
-	tuiAutoRefresh   = 60 * time.Second
+	quotaCache       = 300 * time.Second
+	tuiAutoRefresh   = 300 * time.Second
 	cloudCodeAPI     = "https://daily-cloudcode-pa.googleapis.com/v1internal:"
 	oauthTokenURL    = "https://oauth2.googleapis.com/token"
 	githubRepo       = "aklkbqx/agy-swap"
