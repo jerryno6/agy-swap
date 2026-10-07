@@ -97,3 +97,23 @@ func TestTUIFrameCorners(t *testing.T) {
 		t.Errorf("Header top border = %q, want rounded corners ╭...╮", lines[0])
 	}
 }
+
+func TestFormatUsageRefreshed(t *testing.T) {
+	fixed := time.Date(2026, 10, 7, 14, 38, 17, 0, time.UTC)
+	got := formatUsageRefreshed(fixed)
+	expected := "Usage refreshed at 071026-14:38:17"
+	if got != expected {
+		t.Fatalf("formatUsageRefreshed() = %q, want %q", got, expected)
+	}
+}
+
+func TestTUIStatusShowsUsageRefreshed(t *testing.T) {
+	a, state := overlayTestState()
+	fixed := time.Date(2026, 10, 7, 14, 38, 17, 0, time.UTC)
+	state.message, state.messageType = formatUsageRefreshed(fixed), "success"
+	lines := a.tuiStatusLines(state, 80)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Usage refreshed at 071026-14:38:17") {
+		t.Fatalf("status lines do not contain expected message: %s", joined)
+	}
+}

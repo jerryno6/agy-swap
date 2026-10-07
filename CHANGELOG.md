@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.4
+
+- TUI: include timestamp in usage refresh status (`Usage refreshed at ddMMyy-hh:mm:ss`).
+
 ## 3.1.2
 
 - TUI: unified release merging upstream v2.11.0 features (partitioned accounts, interactive resizable split view, mouse navigation) with 3.1.x auto-next rotation and portable Windows fixes.

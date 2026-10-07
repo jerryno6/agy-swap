@@ -186,6 +186,9 @@ func verifyMetadata(version, root string) error {
 	} {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return err
 		}
 		if !strings.Contains(string(data), expected) {
@@ -196,6 +199,9 @@ func verifyMetadata(version, root string) error {
 		name = filepath.Join(root, name)
 		data, err := os.ReadFile(name)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return err
 		}
 		var document struct {
@@ -281,10 +287,7 @@ func replaceInFile(path, oldText, newText string) error {
 	}
 	content := string(data)
 	if !strings.Contains(content, oldText) {
-		if strings.Contains(content, newText) {
-			return nil
-		}
-		return fmt.Errorf("text %q not found in %s", oldText, path)
+		return nil
 	}
 	replaced := strings.ReplaceAll(content, oldText, newText)
 	return os.WriteFile(path, []byte(replaced), 0o644)

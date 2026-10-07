@@ -745,7 +745,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					state.message, state.messageType = fmt.Sprintf("Usage refresh completed with %d warning(s)", len(value.quotaErrors)), "error"
 					state.beginAnimation("error", 360*time.Millisecond)
 				} else {
-					state.message, state.messageType = "Usage refreshed", "success"
+					state.message, state.messageType = formatUsageRefreshed(time.Now()), "success"
 					state.beginAnimation("success", 360*time.Millisecond)
 				}
 				startActiveResolve()
@@ -1272,4 +1272,8 @@ func (a *Application) activeHint(accounts *Accounts, current string) string {
 		}
 	}
 	return ""
+}
+
+func formatUsageRefreshed(t time.Time) string {
+	return fmt.Sprintf("Usage refreshed at %s", t.Format("020106-15:04:05"))
 }
