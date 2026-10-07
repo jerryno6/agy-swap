@@ -236,7 +236,7 @@ In interactive mode, agy-swap can automatically rotate to the next healthy accou
 - **Persisted choice:** Toggling auto-next with `Shift+N` (`N`), the command palette (`Ctrl-K` → `Toggle auto-next`), or through Settings (`s` → `e` → `ui.auto_next`) persists the choice across sessions in `config.json`.
 - **Always visible badge:** The top frame border permanently displays `AUTO-NEXT: ON [N]` in green or `AUTO-NEXT: OFF [N]` in gray across every view and overlay, even in compact 28x12 terminals.
 - **Refresh trigger:** Auto-next is evaluated immediately after a successful quota refresh (either the 60-second periodic background sync or a manual `r` refresh).
-- **Strict OR boundaries:** Auto-switch triggers only when the active account's remaining capacity drops strictly below 15% on the 5-hour rolling window (`5h < 15%`) OR strictly below 8% on the weekly window (`weekly < 8%`). Equal or higher capacity does not trigger rotation.
+- **Strict OR boundaries:** Auto-switch triggers only when the active account's remaining capacity drops strictly below 20% on the 5-hour rolling window (`5h < 20%`) OR strictly below 15% on the weekly window (`weekly < 15%`). Equal or higher capacity does not trigger rotation.
 - **Safe switching:** Candidate selection skips accounts in cooldown, stale snapshots (>2 minutes), refresh errors, and accounts that are also below thresholds. The switch executes atomically under a session lock (`.session.lock`), preserving active session safety.
 - **Settings display mode:** The current auto-next mode is displayed in the Settings view (`s`) and editable via the settings form.
 

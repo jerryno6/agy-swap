@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	// AutoNext5hThreshold is the strict upper bound for the 5-hour rolling quota window (15%).
-	AutoNext5hThreshold = 0.15
+	// AutoNext5hThreshold is the strict upper bound for the 5-hour rolling quota window (20%).
+	AutoNext5hThreshold = 0.20
 
-	// AutoNextWeeklyThreshold is the strict upper bound for the weekly quota window (8%).
-	AutoNextWeeklyThreshold = 0.08
+	// AutoNextWeeklyThreshold is the strict upper bound for the weekly quota window (15%).
+	AutoNextWeeklyThreshold = 0.15
 
 	// AutoNextMaxQuotaAge is the maximum allowed age of a quota snapshot before it is considered stale.
 	AutoNextMaxQuotaAge = 2 * time.Minute
@@ -31,12 +31,12 @@ type AutoNextThresholdResult struct {
 }
 
 // CheckAutoNextThreshold evaluates whether an account's quota has dropped strictly below the
-// auto-next thresholds (5h < 0.15 OR weekly < 0.08).
+// auto-next thresholds (5h < 0.20 OR weekly < 0.15).
 //
 // Rules:
 //   - Min over ALL matching buckets across all quota groups.
-//   - Strict OR condition: (has5h && min5h < 0.15) || (hasWeekly && minWeekly < 0.08).
-//   - Equality does NOT trigger (0.15 or 0.08 does not trigger).
+//   - Strict OR condition: (has5h && min5h < 0.20) || (hasWeekly && minWeekly < 0.15).
+//   - Equality does NOT trigger (0.20 or 0.15 does not trigger).
 //   - Missing windows are NOT treated as zero and cannot trigger.
 //   - Unusable fractions (NaN, Inf, < 0.0, or > 1.0) are ignored.
 //   - Unknown data (nil account, nil snapshot, malformed timestamps/groups) fails closed (returns false).
@@ -247,7 +247,7 @@ func autoNextAccountRemaining(account Account, family string) (float64, bool) {
 //   - Excludes accounts with refresh errors or auth errors.
 //   - Excludes accounts in cooldown.
 //   - Excludes accounts with stale (>2m) or future snapshots.
-//   - Excludes accounts below either threshold (5h < 0.15 OR weekly < 0.08).
+//   - Excludes accounts below either threshold (5h < 0.20 OR weekly < 0.15).
 //   - Zero credential or network IO on the UI thread.
 //   - Returns (account, true) if an eligible candidate is found; (nil, false) otherwise (no loops).
 func SelectAutoNextCandidate(

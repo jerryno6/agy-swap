@@ -3,6 +3,8 @@
 ## 3.1.4
 
 - TUI: include timestamp in usage refresh status (`Usage refreshed at ddMMyy-hh:mm:ss`).
+- Auto-Next: update auto-switch thresholds to trigger when 5h rolling window < 20% or weekly window < 15%.
+- Tests: remove obsolete auto-next tests.
 
 ## 3.1.2
 

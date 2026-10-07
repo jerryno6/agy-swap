@@ -377,7 +377,7 @@ func (a *Application) handleAutoNext(
 		return current
 	}
 
-	// Active account quota must be below threshold (5h < 15% OR weekly < 8%)
+	// Active account quota must be below threshold (5h < 20% OR weekly < 15%)
 	if !ShouldAutoNext(activeAccount, now) {
 		return current
 	}

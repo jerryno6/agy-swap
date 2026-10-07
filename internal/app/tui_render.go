@@ -1048,7 +1048,7 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"a           Add account",
 		"d           Delete selected account",
 		"n           Choose next available account",
-		"N (Shift+N) Toggle auto-next (5h < 15% or weekly < 8%)",
+		"N (Shift+N) Toggle auto-next (5h < 20% or weekly < 15%)",
 		"t           Toggle manual tier",
 		"m           Move tokens into the vault",
 		"l           Log out",
