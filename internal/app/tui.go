@@ -238,7 +238,11 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	defer resizeTicker.Stop()
 	credentialTicker := time.NewTicker(1500 * time.Millisecond)
 	defer credentialTicker.Stop()
-	quotaTicker := time.NewTicker(tuiAutoRefresh)
+	initialInterval := a.autoNextInterval(state.settings)
+	if a.quota != nil {
+		a.quota.SetCacheTTL(initialInterval)
+	}
+	quotaTicker := time.NewTicker(initialInterval)
 	defer quotaTicker.Stop()
 	defer func() {
 		if frameTimer != nil {
@@ -573,6 +577,13 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		} else {
 			state.message, state.messageType = message, "success"
 			state.beginAnimation("success", 360*time.Millisecond)
+			if form.Kind == "settings" {
+				interval := a.autoNextInterval(state.settings)
+				if a.quota != nil {
+					a.quota.SetCacheTTL(interval)
+				}
+				quotaTicker.Reset(interval)
+			}
 		}
 		a.beginTUIView(state, previousView)
 		// beginTUIView refreshes cached rows, so restore the action result after
@@ -722,7 +733,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		case <-quotaTicker.C:
 			if !refreshing {
 				state.message, state.messageType = "Background sync…", "info"
-				startRefresh(false)
+				startRefresh(true)
 			}
 		case <-frameC:
 			now := time.Now()
@@ -852,6 +863,11 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 								state.splitOffset = 0
 								state.message, state.messageType = "Settings reset", "success"
 								a.beginTUIView(state, tuiViewSettings)
+								interval := a.autoNextInterval(state.settings)
+								if a.quota != nil {
+									a.quota.SetCacheTTL(interval)
+								}
+								quotaTicker.Reset(interval)
 							}
 						case "update":
 							suspend(func() int { return a.cmdUpdate(ctx, cliArgs{}) })
@@ -1280,4 +1296,11 @@ func (a *Application) activeHint(accounts *Accounts, current string) string {
 
 func formatUsageRefreshed(t time.Time) string {
 	return fmt.Sprintf("Usage refreshed at %s", t.Format("020106-15:04:05"))
+}
+
+func (a *Application) autoNextInterval(settings AppSettings) time.Duration {
+	if settings.UI.AutoNextIntervalSeconds > 0 {
+		return time.Duration(settings.UI.AutoNextIntervalSeconds) * time.Second
+	}
+	return tuiAutoRefresh
 }

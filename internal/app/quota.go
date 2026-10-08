@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type quotaProgress func(index, total int, account Account, state string)
 
 type QuotaService struct {
-	http  *HTTPService
-	store *Store
-	vault AccountVault
+	http     *HTTPService
+	store    *Store
+	vault    AccountVault
+	cacheTTL atomic.Int64
 }
 
 func NewQuotaService(httpService *HTTPService, store *Store) *QuotaService {
@@ -21,6 +23,23 @@ func NewQuotaService(httpService *HTTPService, store *Store) *QuotaService {
 }
 
 func (q *QuotaService) SetVault(vault AccountVault) { q.vault = vault }
+
+func (q *QuotaService) SetCacheTTL(ttl time.Duration) {
+	if q != nil {
+		q.cacheTTL.Store(int64(ttl))
+	}
+}
+
+func (q *QuotaService) CacheTTL() time.Duration {
+	if q == nil {
+		return quotaCache
+	}
+	v := q.cacheTTL.Load()
+	if v > 0 {
+		return time.Duration(v)
+	}
+	return quotaCache
+}
 
 func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]any, error) {
 	tokenData, err := accountToken(ctx, account, q.vault)
@@ -129,7 +148,8 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 			continue
 		}
 		account := accounts.ByEmail[email]
-		if age, ok := quotaAge(account, now); !force && ok && age < quotaCache {
+		cacheDuration := q.CacheTTL()
+		if age, ok := quotaAge(account, now); !force && ok && age < cacheDuration {
 			done++
 			if progress != nil {
 				progress(done, accounts.Len(), account, "cached")

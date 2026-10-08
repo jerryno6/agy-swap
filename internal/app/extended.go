@@ -520,6 +520,16 @@ func setConfigValue(settings *AppSettings, key, value string) error {
 		}
 		return parsed, nil
 	}
+	parseDurationOrSeconds := func(min, max int) (int, error) {
+		if d, err := time.ParseDuration(value); err == nil {
+			secs := int(d.Seconds())
+			if secs < min || secs > max {
+				return 0, fmt.Errorf("value must be between %d and %d seconds", min, max)
+			}
+			return secs, nil
+		}
+		return parseInt(min, max)
+	}
 	switch key {
 	case "policy.name":
 		settings.Policy.Name = value
@@ -606,6 +616,12 @@ func setConfigValue(settings *AppSettings, key, value string) error {
 			return err
 		}
 		settings.UI.AutoNext = parsed
+	case "ui.auto_next_interval_seconds", "ui.auto_next_interval", "auto_next_interval", "ui.refresh_interval", "refresh_interval":
+		parsed, err := parseDurationOrSeconds(10, 86400)
+		if err != nil {
+			return err
+		}
+		settings.UI.AutoNextIntervalSeconds = parsed
 	default:
 		return fmt.Errorf("unknown configuration key %q", key)
 	}

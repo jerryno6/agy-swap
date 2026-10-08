@@ -77,8 +77,9 @@ type TargetConfig struct {
 }
 
 type UIConfig struct {
-	SplitOffset int  `json:"split_offset,omitempty"`
-	AutoNext    bool `json:"auto_next,omitempty"`
+	SplitOffset             int  `json:"split_offset,omitempty"`
+	AutoNext                bool `json:"auto_next,omitempty"`
+	AutoNextIntervalSeconds int  `json:"auto_next_interval_seconds,omitempty"`
 }
 
 func defaultSettings() AppSettings {
@@ -92,7 +93,7 @@ func defaultSettings() AppSettings {
 		Notifications: NotificationConfig{Threshold: 20, CooldownSeconds: 1800},
 		History:       HistoryConfig{Enabled: true, RetentionDays: 30, MaxBytes: maxHistoryBytes},
 		Targets:       map[string]TargetConfig{},
-		UI:            UIConfig{},
+		UI:            UIConfig{AutoNextIntervalSeconds: 300},
 	}
 }
 
@@ -145,6 +146,12 @@ func normalizeSettings(s AppSettings) (AppSettings, error) {
 	}
 	if s.History.MaxBytes == 0 {
 		s.History.MaxBytes = defaults.History.MaxBytes
+	}
+	if s.UI.AutoNextIntervalSeconds <= 0 {
+		s.UI.AutoNextIntervalSeconds = defaults.UI.AutoNextIntervalSeconds
+	}
+	if s.UI.AutoNextIntervalSeconds < 10 || s.UI.AutoNextIntervalSeconds > 86400 {
+		return AppSettings{}, errors.New("ui auto_next_interval_seconds must be between 10 and 86400")
 	}
 	if s.UI.SplitOffset < -40 || s.UI.SplitOffset > 40 {
 		s.UI.SplitOffset = 0

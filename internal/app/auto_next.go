@@ -15,7 +15,7 @@ const (
 	AutoNextWeeklyThreshold = 0.15
 
 	// AutoNextMaxQuotaAge is the maximum allowed age of a quota snapshot before it is considered stale.
-	AutoNextMaxQuotaAge = 2 * time.Minute
+	AutoNextMaxQuotaAge = 15 * time.Minute
 )
 
 // AutoNextThresholdResult contains detailed results of quota threshold evaluation.
