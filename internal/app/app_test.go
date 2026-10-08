@@ -253,26 +253,29 @@ func TestLegacyQuotaMigrationKeepsLegacyData(t *testing.T) {
 }
 
 func quotaAccount(email string, gemini, thirdParty float64, reset time.Time) Account {
-	return Account{"email": email, "name": email, "quota_snapshot": map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": "free-tier", "name": "Free"}, "groups": []any{map[string]any{"id": "gemini", "name": "Gemini Models", "buckets": []any{map[string]any{"id": "gemini-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": gemini, "reset_at": isoTime(reset)}}}, map[string]any{"id": "third_party", "name": "Third Party", "buckets": []any{map[string]any{"id": "3p-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": thirdParty, "reset_at": isoTime(reset)}}}}}}
+	return Account{"email": email, "name": email, "quota_snapshot": map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": "free-tier", "name": "Free"}, "groups": []any{map[string]any{"id": "gemini", "name": "Gemini Models", "buckets": []any{map[string]any{"id": "gemini-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": gemini, "reset_at": isoTime(reset)}, map[string]any{"id": "gemini-5h", "name": "5 hours", "window": "5h", "remaining_fraction": gemini, "reset_at": isoTime(reset)}}}, map[string]any{"id": "third_party", "name": "Third Party", "buckets": []any{map[string]any{"id": "3p-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": thirdParty, "reset_at": isoTime(reset)}}}}}}
 }
 
 func TestAccountAvailabilityKeepsFamiliesIndependent(t *testing.T) {
-	reset := time.Now().Add(3 * time.Hour)
+	now := time.Now()
+	reset := now.Add(3 * time.Hour)
 	account := quotaAccount("user@example.com", 0.9584, 0, reset)
 	p := makePalette(false)
-	if got := accountHealthCompact(account, time.Now()); got != "Gemini 96% ready" {
-		t.Fatalf("compact health = %q, want Gemini ready state", got)
+	wantReady := " 96%  3h -  96%  3h"
+	if got := accountHealthCompact(account, now); got != wantReady {
+		t.Fatalf("compact health = %q, want %q", got, wantReady)
 	}
-	status := accountStatus(account, p, time.Now())
+	status := accountStatus(account, p, now)
 	if !strings.Contains(status, "Ready") || !strings.Contains(status, "Gemini") || !strings.Contains(status, "Claude/GPT limited") {
 		t.Fatalf("family-aware status = %q", status)
 	}
 
 	allLimited := quotaAccount("limited@example.com", 0, 0, reset)
-	if got := accountHealthCompact(allLimited, time.Now()); got != "limited" {
-		t.Fatalf("all-limited compact health = %q", got)
+	wantLimited := "  0%  3h -   0%  3h"
+	if got := accountHealthCompact(allLimited, now); got != wantLimited {
+		t.Fatalf("all-limited compact health = %q, want %q", got, wantLimited)
 	}
-	if status := accountStatus(allLimited, p, time.Now()); !strings.Contains(status, "Limited") {
+	if status := accountStatus(allLimited, p, now); !strings.Contains(status, "Limited") {
 		t.Fatalf("all-limited status = %q", status)
 	}
 }
@@ -383,7 +386,7 @@ func TestTUIResponsiveRenderersShareVisualContract(t *testing.T) {
 	wide := a.tuiAccountTableRows(state, 56, 4)
 	for name, rows := range map[string][]string{"stacked": stacked, "wide": wide} {
 		joined := strings.Join(rows, "\n")
-		for _, want := range []string{"❯", "[US]", "Gemini 85% ready"} {
+		for _, want := range []string{"❯", "[US]", "85%"} {
 			if !strings.Contains(joined, want) {
 				t.Fatalf("%s renderer missing %q: %q", name, want, rows)
 			}
@@ -459,19 +462,22 @@ func TestTUINarrowQuotaValueWithoutResetOrDue(t *testing.T) {
 
 func TestTUIQuotaListDropsEmailBeforeHealthAtNarrowWidth(t *testing.T) {
 	accounts := NewAccounts()
-	account := quotaAccount("user@example.com", 0.85, 0.45, time.Now().Add(50*time.Hour))
+	now := time.Now()
+	reset := now.Add(50 * time.Hour)
+	account := quotaAccount("user@example.com", 0.85, 0.45, reset)
 	account["name"] = "Alpha Tester"
 	accounts.Set("user@example.com", account)
-	a := &Application{Version: "test", p: makePalette(false), color: false}
+	a := &Application{Version: "test", p: makePalette(false), color: false, renderClock: func() time.Time { return now }}
 	state := newTUIState(accounts, "user@example.com")
 	state.view = tuiViewQuota
 
+	expectedHealth := " 85%  2d -  85% 50h"
 	narrow := a.tuiQuotaViewRows(state, 36, 12)
-	if want := "● Alpha Tester  Gemini 85% ready"; narrow[0] != want {
+	if want := "● Alpha Tester  " + expectedHealth; narrow[0] != want {
 		t.Fatalf("narrow row = %q, want %q", narrow[0], want)
 	}
 	wide := a.tuiQuotaViewRows(state, 80, 12)
-	if !strings.Contains(wide[0], "user@example.com") || !strings.Contains(wide[0], "Gemini 85% ready") {
+	if !strings.Contains(wide[0], "user@example.com") || !strings.Contains(wide[0], expectedHealth) {
 		t.Fatalf("wide row lost email or health: %q", wide[0])
 	}
 }

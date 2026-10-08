@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.6
+
+- TUI: update HEALTH column to display Gemini quota countdown with remaining days/hours (weekly on left, 5h rolling window on right).
+
 ## 3.1.5
 
 - TUI: navigate back to dashboard on Escape from subviews (healthcheck/doctor, profiles, settings, history, backup, quota) instead of quitting app.

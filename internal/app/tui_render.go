@@ -342,15 +342,15 @@ func (a *Application) tuiHealthColor(tone tuiHealthTone) string {
 func (a *Application) tuiAccountView(state *tuiState, email string, now time.Time) tuiAccountView {
 	account := state.accounts.ByEmail[email]
 	name := firstString(tuiText(getString(account, "name")), "Google User")
-	groups := quotaGroupHealths(account)
+	health, tone := accountGeminiHealth(account, now)
 	view := tuiAccountView{
 		email:    email,
 		name:     name,
 		avatar:   avatar(name, email, a.color),
 		selected: strings.EqualFold(email, state.selectedEmail),
 		active:   strings.EqualFold(email, state.active),
-		health:   accountHealthCompactForGroups(account, groups, now),
-		tone:     tuiHealthToneForGroups(groups, account, now),
+		health:   health,
+		tone:     tone,
 	}
 	if state != nil {
 		if needs, reason := state.accountNeedsAttention(email); needs {
@@ -559,7 +559,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 				rows = append(rows, fitVisible(label, width, a.p))
 				break
 			}
-			summary := "  " + a.tuiHealthColor(view.tone) + tuiText(view.health) + a.p.Reset
+			summary := "  " + a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			rows = append(rows, fitVisible(label, width, a.p), fitVisible(summary, width, a.p))
 		}
 		return rows
@@ -576,7 +576,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 		for _, email := range ready {
 			view := a.tuiAccountView(state, email, now)
 			label := a.tuiAccountIdentityLine(view, state)
-			summary := "  " + a.tuiHealthColor(view.tone) + tuiText(view.health) + a.p.Reset
+			summary := "  " + a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			blocks = append(blocks, stackedBlock{email: email, lines: []string{fitVisible(label, width, a.p), fitVisible(summary, width, a.p)}})
 		}
 	}
@@ -585,7 +585,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 		for _, email := range attention {
 			view := a.tuiAccountView(state, email, now)
 			label := a.tuiAccountIdentityLine(view, state)
-			summary := "  " + a.tuiHealthColor(view.tone) + tuiText(view.health) + a.p.Reset
+			summary := "  " + a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			blocks = append(blocks, stackedBlock{email: email, lines: []string{fitVisible(label, width, a.p), fitVisible(summary, width, a.p)}})
 		}
 	}
@@ -679,7 +679,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 		for _, email := range emails[start:end] {
 			view := a.tuiAccountView(state, email, now)
 			identity := a.tuiIdentity(view.name)
-			health := a.tuiHealthColor(view.tone) + tuiText(view.health) + a.p.Reset
+			health := a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
@@ -733,7 +733,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 		} else {
 			view := a.tuiAccountView(state, it.email, now)
 			identity := a.tuiIdentity(view.name)
-			health := a.tuiHealthColor(view.tone) + tuiText(view.health) + a.p.Reset
+			health := a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
@@ -767,6 +767,9 @@ func tuiAccountColumnWidths(width int) (marker, identity, health int) {
 	width = maxInt(16, width)
 	marker = 4 // [AA]
 	health = maxInt(14, minInt(32, width/3))
+	if width >= 48 && health < 19 {
+		health = 19
+	}
 	identity = width - marker - health - 6 // two marker columns plus four spaces
 	if identity < 12 {
 		health = maxInt(10, health-(12-identity))
@@ -872,7 +875,8 @@ func tuiText(value string) string {
 }
 
 func accountHealthCompact(account Account, now time.Time) string {
-	return accountHealthCompactForGroups(account, quotaGroupHealths(account), now)
+	health, _ := accountGeminiHealth(account, now)
+	return health
 }
 
 func accountHealthCompactForGroups(account Account, groups []quotaGroupHealth, now time.Time) string {

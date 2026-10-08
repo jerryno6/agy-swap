@@ -45,11 +45,18 @@ func NewDemo(version string, in io.Reader, out, errOut io.Writer, options DemoOp
 				"tier":        map[string]any{"id": "pro-tier", "name": "Pro"},
 				"groups": []any{map[string]any{
 					"id": "gemini", "name": "Gemini Models",
-					"buckets": []any{map[string]any{
-						"id": "gemini-weekly", "name": "Weekly", "window": "weekly",
-						"remaining_fraction": fixture.remaining,
-						"reset_at":           now.Add(time.Duration(i+1) * 8 * time.Hour).Format(time.RFC3339),
-					}},
+					"buckets": []any{
+						map[string]any{
+							"id": "gemini-weekly", "name": "Weekly", "window": "weekly",
+							"remaining_fraction": fixture.remaining,
+							"reset_at":           now.Add(time.Duration(i+1) * 8 * time.Hour).Format(time.RFC3339),
+						},
+						map[string]any{
+							"id": "gemini-5h", "name": "5 hours", "window": "5h",
+							"remaining_fraction": fixture.remaining * 0.9,
+							"reset_at":           now.Add(time.Duration(i+1) * 2 * time.Hour).Format(time.RFC3339),
+						},
+					},
 				}},
 			},
 		})

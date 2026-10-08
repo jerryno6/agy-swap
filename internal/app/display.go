@@ -222,6 +222,139 @@ type quotaGroupHealth struct {
 	found    bool
 }
 
+type geminiBucketQuota struct {
+	fraction float64
+	resetAt  time.Time
+	found    bool
+}
+
+func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found bool) {
+	groups := quotaGroups(account)
+	for _, rawGroup := range groups {
+		group := getMap(rawGroup)
+		if strings.ToLower(cleanText(getString(group, "id"))) != "gemini" {
+			continue
+		}
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			fraction, ok := getFloat(bucket["remaining_fraction"])
+			if !ok {
+				continue
+			}
+			fraction = max(0, min(1, fraction))
+			resetAt, _ := parseUTC(getString(bucket, "reset_at"))
+			window := strings.ToLower(cleanText(getString(bucket, "window")))
+			id := strings.ToLower(cleanText(getString(bucket, "id")))
+
+			if window == "weekly" || strings.Contains(id, "weekly") || strings.Contains(window, "week") {
+				weekly.fraction = fraction
+				weekly.resetAt = resetAt
+				weekly.found = true
+				found = true
+			} else if window == "5h" || strings.Contains(id, "5h") || strings.Contains(window, "5h") ||
+				window == "daily" || strings.Contains(id, "daily") || strings.Contains(window, "day") {
+				daily.fraction = fraction
+				daily.resetAt = resetAt
+				daily.found = true
+				found = true
+			}
+		}
+	}
+	return weekly, daily, found
+}
+
+func formatHealthResetWeekly(resetAt time.Time, now time.Time) string {
+	if resetAt.IsZero() {
+		return " --"
+	}
+	remaining := resetAt.Sub(now)
+	if remaining <= 0 {
+		return " 0m"
+	}
+	remaining = remaining.Round(time.Minute)
+	if remaining <= 0 {
+		return " 0m"
+	}
+	if remaining >= 24*time.Hour {
+		days := int(remaining / (24 * time.Hour))
+		return fmt.Sprintf("%2dd", days)
+	}
+	if remaining >= time.Hour {
+		hours := int(remaining / time.Hour)
+		return fmt.Sprintf("%2dh", hours)
+	}
+	minutes := int(remaining / time.Minute)
+	return fmt.Sprintf("%2dm", minutes)
+}
+
+func formatHealthResetDaily(resetAt time.Time, now time.Time) string {
+	if resetAt.IsZero() {
+		return " --"
+	}
+	remaining := resetAt.Sub(now)
+	if remaining <= 0 {
+		return " 0m"
+	}
+	remaining = remaining.Round(time.Minute)
+	if remaining <= 0 {
+		return " 0m"
+	}
+	if remaining >= time.Hour {
+		hours := int(remaining / time.Hour)
+		return fmt.Sprintf("%2dh", hours)
+	}
+	minutes := int(remaining / time.Minute)
+	return fmt.Sprintf("%2dm", minutes)
+}
+
+func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone) {
+	weekly, daily, found := geminiQuotaBuckets(account)
+	if !found {
+		if len(activeLimits(account, now)) > 0 {
+			return "cooldown", tuiHealthCooldown
+		}
+		return "pending", tuiHealthPending
+	}
+
+	weeklyPct := "  --"
+	weeklyResetStr := " --"
+	if weekly.found {
+		weeklyPct = fmt.Sprintf("%4s", fmt.Sprintf("%.0f%%", weekly.fraction*100))
+		weeklyResetStr = formatHealthResetWeekly(weekly.resetAt, now)
+	}
+
+	dailyPct := "  --"
+	dailyResetStr := " --"
+	if daily.found {
+		dailyPct = fmt.Sprintf("%4s", fmt.Sprintf("%.0f%%", daily.fraction*100))
+		dailyResetStr = formatHealthResetDaily(daily.resetAt, now)
+	}
+
+	health := fmt.Sprintf("%s %s - %s %s", weeklyPct, weeklyResetStr, dailyPct, dailyResetStr)
+
+	minFraction := 1.0
+	if weekly.found && daily.found {
+		minFraction = min(weekly.fraction, daily.fraction)
+	} else if weekly.found {
+		minFraction = weekly.fraction
+	} else if daily.found {
+		minFraction = daily.fraction
+	}
+
+	var tone tuiHealthTone
+	if minFraction <= 0 {
+		tone = tuiHealthLimited
+	} else if minFraction <= 0.10 {
+		tone = tuiHealthCritical
+	} else if minFraction <= 0.30 {
+		tone = tuiHealthWarning
+	} else {
+		tone = tuiHealthReady
+	}
+
+	return health, tone
+}
+
 func quotaGroupHealths(account Account) []quotaGroupHealth {
 	groups := quotaGroups(account)
 	result := make([]quotaGroupHealth, 0, len(groups))
