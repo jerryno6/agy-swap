@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.5
+
+- TUI: navigate back to dashboard on Escape from subviews (healthcheck/doctor, profiles, settings, history, backup, quota) instead of quitting app.
+- TUI: prevent Escape from exiting app on dashboard; only quit on `q`, Ctrl-C, or Ctrl-D.
+- Windows: implement proper Win32 console input timeout using `WaitForSingleObject` and key-up event filtering so bare Escape key is recognized without hanging on Windows 11.
+
 ## 3.1.4
 
 - TUI: include timestamp in usage refresh status (`Usage refreshed at ddMMyy-hh:mm:ss`).

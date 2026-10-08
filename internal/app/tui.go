@@ -1053,9 +1053,13 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				}
 
 				switch key {
-				case "q", "esc", "ctrl-c", "ctrl-d":
+				case "q", "ctrl-c", "ctrl-d":
 					finish()
 					return 0
+				case "esc":
+					if state.view != tuiViewDashboard {
+						setView(tuiViewDashboard)
+					}
 				case "ctrl-k", ":":
 					state.beginPalette()
 				case "?":

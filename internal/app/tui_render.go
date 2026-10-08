@@ -1001,18 +1001,18 @@ func (a *Application) tuiFooterLines(state *tuiState, width int) []string {
 		footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[[]/[]]", "Resize", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 	}
 	if state.view != tuiViewDashboard {
-		footer = formatKeycaps(a.p, "[↑↓]", "Navigate", "[Enter]", "Edit", "[b]", "Dashboard", "[^K]", "Actions", "[?]", "Help")
+		footer = formatKeycaps(a.p, "[↑↓]", "Navigate", "[Enter]", "Edit", "[Esc]", "Dashboard", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 		switch state.view {
 		case tuiViewBackup:
-			footer = formatKeycaps(a.p, "[x]", "Export", "[i]", "Import", "[v]", "Verify", "[b]", "Dashboard", "[^K]", "Actions")
+			footer = formatKeycaps(a.p, "[x]", "Export", "[i]", "Import", "[v]", "Verify", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewHistory:
-			footer = formatKeycaps(a.p, "[c]", "Clear", "[x]", "Export", "[b]", "Dashboard", "[^K]", "Actions")
+			footer = formatKeycaps(a.p, "[c]", "Clear", "[x]", "Export", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewSettings:
-			footer = formatKeycaps(a.p, "[e]", "Edit", "[a]", "Alias", "[b]", "Binding", "[t]", "Target", "[^K]", "Actions")
+			footer = formatKeycaps(a.p, "[e]", "Edit", "[a]", "Alias", "[b]", "Binding", "[t]", "Target", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewDoctor:
-			footer = formatKeycaps(a.p, "[Enter]", "Run again", "[b]", "Dashboard", "[^K]", "Actions")
+			footer = formatKeycaps(a.p, "[Enter]", "Run again", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewProfiles:
-			footer = formatKeycaps(a.p, "[c]", "Create", "[Enter]", "Edit", "[d]", "Delete", "[b]", "Dashboard", "[^K]", "Actions")
+			footer = formatKeycaps(a.p, "[c]", "Create", "[Enter]", "Edit", "[d]", "Delete", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		}
 	}
 	switch state.mode {
@@ -1056,8 +1056,8 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"x / i / v   Export, import, or verify in managers",
 		"c / x       Create/clear or export in managers",
 		"u           Download and install the latest release",
-		"b           Return to dashboard",
-		"Esc / any   Close help",
+		"Esc         Return to dashboard / cancel",
+		"q           Quit",
 		"",
 		a.p.Gray + "Actions keep the active session safe." + a.p.Reset,
 	}
