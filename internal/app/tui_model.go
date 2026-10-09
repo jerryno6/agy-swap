@@ -382,6 +382,18 @@ func (s *tuiState) selectedIndex() int {
 	return 0
 }
 
+func (s *tuiState) accountOrderIndex(email string) int {
+	if s.accounts == nil {
+		return 0
+	}
+	for i, item := range s.accounts.Order {
+		if strings.EqualFold(item, email) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 func (s *tuiState) moveProfile(delta int) {
 	if len(s.profileNames) == 0 {
 		return

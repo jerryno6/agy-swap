@@ -400,6 +400,13 @@ func (a *Application) tuiRecentMarker(view tuiAccountView) string {
 	return a.p.DarkGray + "·" + a.p.Reset
 }
 
+func (a *Application) tuiIndexMarker(idx int) string {
+	if idx <= 0 {
+		return "  "
+	}
+	return a.p.Gray + fmt.Sprintf("%2d", idx) + a.p.Reset
+}
+
 func (a *Application) tuiAccountIdentityLine(view tuiAccountView, state *tuiState) string {
 	return fmt.Sprintf("%s %s %s %s %s %s", a.tuiSelectionMarker(view, state), a.tuiActiveMarker(view), a.tuiRecentMarker(view), view.avatar, a.tuiIdentity(view.name), a.tuiSecondary("<"+view.email+">"))
 }
@@ -424,7 +431,7 @@ func (a *Application) tuiWideBody(state *tuiState, width, height int) []string {
 	g.rightWidth = maxInt(1, totalAvail-g.leftWidth)
 	lines := []string{panelDivider(g, a.p)}
 	if g.bodyRows > 1 {
-		leftTitle := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  ❯ selected · ● active · " + a.p.Yellow + "●" + a.p.Gray + " changed" + a.p.Reset
+		leftTitle := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  " + a.p.Orange + "❯" + a.p.Gray + " selected · " + a.p.Green + "●" + a.p.Gray + " active · " + a.p.Yellow + "●" + a.p.Gray + " changed" + a.p.Reset
 		rightTitle := a.tuiSectionTitle("ACCOUNT HEALTH")
 		lines = append(lines, panelRow(leftTitle, rightTitle, g, a.p))
 	}
@@ -450,7 +457,7 @@ func (a *Application) tuiStackedBody(state *tuiState, width, height int) []strin
 	g.bodyRows = maxInt(1, height)
 	lines := []string{a.p.Gray + "├" + strings.Repeat("─", g.frameWidth-2) + "┤" + a.p.Reset}
 	if len(lines) < g.bodyRows {
-		title := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  ❯ selected · ● active" + a.p.Reset
+		title := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  " + a.p.Orange + "❯" + a.p.Gray + " selected · " + a.p.Green + "●" + a.p.Gray + " active" + a.p.Reset
 		lines = append(lines, frameRow(title, g, a.p))
 	}
 	if len(lines) >= g.bodyRows {
@@ -650,6 +657,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 	markerWidth, identityWidth, healthWidth := tuiAccountColumnWidths(width)
 	columns := []string{
 		fitVisible("S", 1, a.p),
+		fitVisible(" #", 2, a.p),
 		fitVisible("A", 1, a.p),
 		fitVisible("R", 1, a.p),
 		fitVisible("TAG", markerWidth, a.p),
@@ -690,8 +698,10 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 			view := a.tuiAccountView(state, email, now)
 			identity := a.tuiIdentity(view.name)
 			health := a.tuiHealthColor(view.tone) + view.health + a.p.Reset
+			idx := state.accountOrderIndex(email)
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
+				fitVisible(a.tuiIndexMarker(idx), 2, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
 				fitVisible(a.tuiRecentMarker(view), 1, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
@@ -745,8 +755,10 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 			view := a.tuiAccountView(state, it.email, now)
 			identity := a.tuiIdentity(view.name)
 			health := a.tuiHealthColor(view.tone) + view.health + a.p.Reset
+			idx := state.accountOrderIndex(it.email)
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
+				fitVisible(a.tuiIndexMarker(idx), 2, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
 				fitVisible(a.tuiRecentMarker(view), 1, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
@@ -782,10 +794,10 @@ func tuiAccountColumnWidths(width int) (marker, identity, health int) {
 	if width >= 48 && health < 19 {
 		health = 19
 	}
-	identity = width - marker - health - 8 // three marker columns (S, A, R) plus five spaces
+	identity = width - marker - health - 11 // four marker/index columns (S, #, A, R) plus six spaces
 	if identity < 12 {
 		health = maxInt(10, health-(12-identity))
-		identity = width - marker - health - 8
+		identity = width - marker - health - 11
 	}
 	return marker, maxInt(1, identity), maxInt(1, health)
 }

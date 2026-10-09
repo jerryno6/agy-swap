@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.10
+
+- TUI: add aligned account index column '#' after 'S' in account table matching 'agy-swap switch <index>'.
+- TUI: fix colors for 'selected' (Orange) and 'active' (Green) legend indicators in accounts header.
+
 ## 3.1.9
 
 - Warm-up: use Gemini 3.8 Flash (Low), resolving the account's advertised model ID and setting low thinking effort for the tiered model.
