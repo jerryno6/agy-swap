@@ -70,7 +70,7 @@ Phải làm trước vòng fallback để không retry trên phiên đang hỏng
 - Thất bại trước mutation: an toàn để thử ứng viên khác, sau khi recheck identity.
 - Thất bại sau mutation: chỉ an toàn để thử tiếp khi rollback đã hoàn tất và xác minh trạng thái trở về baseline.
 - Rollback lỗi hoặc không xác định được trạng thái: dừng toàn bộ lượt auto-next và báo lỗi có thể hành động.
-- Giữ ngoại lệ fallback secure-store theo platform hiện có; không mở rộng hoặc siết policy Windows/Linux/macOS ngoài task.
+- Giữ contract Windows và ngoại lệ Linux hiện có. Riêng macOS phải sửa nhánh báo thành công chỉ từ OAuth files khi Keychain write thất bại; xem phần 11. Không siết mọi backend bằng cách gắn yêu cầu secure-store vào sessionPreparer.
 
 ### A3. Baseline và rollback
 
@@ -205,3 +205,83 @@ Hoàn thành khi một ứng viên lỗi không chặn ứng viên dùng đượ
 - Lượt review trước đã chạy go test ./... và pass trên code hiện tại; kết quả đó không phải validation cho implementation tương lai.
 - Lượt viết plan này chỉ tạo tài liệu, không implement và không chạy thêm test.
 - Hai file untracked agy-swap.exe.3.1.5 và agy-swap.exe.3.1.6 đã có trước task, không nằm trong phạm vi.
+
+## 11. Phần bổ sung riêng cho macOS
+
+### 11.1. Phạm vi dùng chung và khác biệt platform
+
+- Fallback auto-next, sync settings/timer và tài liệu 300 giây / 15 phút áp dụng cho cả Windows lẫn macOS.
+- Giới hạn 2560 byte và compact credential là riêng Windows; không áp giới hạn đó cho macOS.
+- Active-session macOS dùng service gemini, account antigravity, truy cập bằng /usr/bin/security trong credential_unix.go.
+- Saved-account vault là tầng khác: mặc định vault.json; nếu chọn keychain thì dùng service agy-swap qua Security.framework trong keychain_darwin.go.
+- Không đổi active-session writer sang Security.framework hoặc một helper binary khác. Code hiện tại chủ động giữ /usr/bin/security làm identity truy cập item, do partition-list ownership.
+- Không delete/recreate item để xử lý lỗi quyền và không tự sửa ACL/partition list. Cập nhật tại chỗ bằng add-generic-password -U theo đường hiện có.
+
+### 11.2. Phát hiện bổ sung: có thể báo switch thành công khi Keychain chưa cập nhật
+
+Chuỗi điều kiện trong code hiện tại:
+
+1. platformCredentialGet trên Darwin trả chuỗi rỗng cho mọi lỗi chạy security, gồm lỗi quyền và timeout; chưa phân biệt item không có với item không đọc được.
+2. Backend macOS không implement sessionPreparer, nên applyUnlocked để requireSecure=false.
+3. Khi previous rỗng, Set thất bại và lần Get sau vẫn rỗng, switch trong applyUnlocked không return false.
+4. Nếu writeOAuthFiles thành công, applyUnlocked trả true dù chưa chứng minh active-session Keychain được publish.
+
+Đây là nhánh có thật trong code, chưa được tái hiện trên máy macOS. OAuth files có thể đã chuyển sang B trong khi Keychain còn A hoặc không truy cập được, làm các consumer đọc khác nguồn nhận phiên không nhất quán.
+
+Ưu tiên P1 cho contract không báo thành công giả này; xác minh bằng backend/command fixture hiện có trước khi kết luận hành vi integration của agy thực tế.
+
+### 11.3. Thiết kế sửa contract macOS
+
+- Bổ sung kết quả đọc credential có trạng thái Found / NotFound / Failed và error; tránh dùng chuỗi rỗng thay cho cả ba trạng thái.
+- Có thể dùng capability/interface nội bộ bổ sung và giữ Get/Set/Delete bool wrapper cho caller cũ. Không bắt mọi backend giả hoặc Linux đổi semantics cùng lúc.
+- Phân loại NotFound chỉ khi có bằng chứng từ exit status/kết quả của security. Chưa xác minh được thì giữ Failed; không dựa vào stdout rỗng để suy ra item không tồn tại.
+- Đưa yêu cầu publish vào authoritative secure store thành capability riêng của backend. Không dùng sessionPreparer như tín hiệu ngầm cho yêu cầu này: macOS không cần compact token nhưng vẫn cần Keychain publish thành công.
+- Nếu read ban đầu Failed: không mutation; báo lỗi rõ và dừng lượt auto-next.
+- Nếu Set thất bại: chỉ có thể coi publish thành công khi read-back thành công và nội dung đúng token đích. Nếu read-back Failed/NotFound thì không được thành công chỉ bằng OAuth files.
+- Nếu Set thành công: read-back xác minh khi cần bảo đảm transaction. Không giả định consumer khác đã chuyển theo ngay; việc đó thuộc smoke test thực tế.
+- Khi OAuth-file write lỗi: phục hồi credential cũ; nếu item ban đầu thực sự NotFound thì xóa item vừa tạo. Delete/restore phải có kết quả và xác minh; rollback không rõ thì không retry.
+- Giữ nguyên yêu cầu snapshot/restore cả ba OAuth files trong bước A.
+- Thông báo phân biệt not-found, timeout/cancel, permission/interaction failure và write/rollback failure ở mức dữ liệu đã xác minh. Không suy đoán mọi exit code đều do Keychain bị khóa.
+- Không hiển thị command line chứa token hoặc raw stdout/stderr. Nếu cần đọc stderr để phân loại thì giới hạn, lọc và chỉ đưa lỗi an toàn lên UI.
+
+### 11.4. Fallback macOS và khả năng đáp ứng của TUI
+
+- Lỗi riêng ứng viên, ví dụ vault entry thiếu hoặc token identity sai: thử ứng viên kế tiếp nếu phiên chưa bị đổi.
+- Lỗi chung active-session store, ví dụ Keychain không đọc/ghi được, timeout hoặc user từ chối prompt: dừng cả lượt. Không thử N ứng viên và lặp N lần cùng thao tác/prompt không thể thành công.
+- Có snapshot quota hợp lệ không có nghĩa là Keychain active-session đang truy cập được.
+- Không dùng network trong SessionLock. Kiểm tra thời gian chặn hiện có: Get timeout 5 giây và Set timeout 10 giây; nhiều thao tác nối tiếp có thể làm UI không phản hồi lâu hơn từng timeout.
+- Nếu chuyển transaction credential sang worker để giữ TUI đáp ứng, event loop vẫn sở hữu UI state; worker phải hỗ trợ cancel, chống chồng job và recheck identity/revision/settings trước apply. Không cho worker ghi trực tiếp state.
+- Không thêm retry tự động liên tục cho lỗi user từ chối quyền. Lượt refresh sau có thể kiểm tra lại một lần, với thông báo không spam.
+- Không hứa file lock của agy-swap khóa được thao tác từ agy hay security bên ngoài. Các process không dùng SessionLock vẫn có thể đổi Keychain; giữ recheck và ghi rõ giới hạn phối hợp.
+
+### 11.5. Ma trận kiểm chứng riêng trên macOS
+
+| Kịch bản | Kết quả cần đạt |
+| --- | --- |
+| Keychain read/write bình thường, active quota thấp | Switch ứng viên khỏe và cập nhật cả Keychain/OAuth files |
+| Saved vault là file và là keychain | Cả hai mode dùng cùng active-session contract; không nhầm vault với session |
+| Item ban đầu thực sự không tồn tại; Set thành công | Cho phép switch; xác minh item mới và OAuth files |
+| Read timeout hoặc permission failure, stdout rỗng | Không coi là NotFound; không mutation, không history success |
+| Item không tồn tại, Set thất bại, read-back rỗng | Không báo thành công chỉ nhờ ghi OAuth files |
+| Set lỗi nhưng read-back xác minh đúng token đích | Xử lý theo transaction contract, chỉ success khi OAuth files cũng hoàn tất |
+| Keychain locked hoặc user từ chối authorization | Dừng lượt; không fallback gây prompt lặp theo số ứng viên |
+| B thiếu saved-vault entry, C hợp lệ; session Keychain truy cập được | Fallback C thành công |
+| OAuth-file write lỗi sau Keychain Set | Restore baseline; không history success; chỉ retry nếu rollback xác minh được |
+| Keychain restore/delete hoặc read-back lỗi | Báo rollback không an toàn và dừng fallback |
+| agy/terminal khác đổi session trong khi refresh | Recheck ngăn ghi đè nếu phát hiện; xác minh giới hạn race của consumer ngoài lock |
+| CLI bật/tắt và đổi interval khi TUI macOS mở | Cùng tiêu chí sync/timer trong phần 8 |
+
+- Chạy go test ./... trên macOS, với build Darwin/cgo theo cấu hình release. Windows pass hoặc cross-compile không kiểm chứng Keychain runtime.
+- Tái sử dụng credential_security_test.go, app_test.go và keychain_darwin_probe_test.go; không tạo *_test.go mới.
+- Probe Keychain thật hiện là opt-in: AGY_SWAP_KEYCHAIN_PROBE=1 go test -run TestKeychain ./internal/app. Dùng item probe cô lập và cleanup theo fixture hiện có.
+- Probe hiện kiểm tra saved-vault Security.framework; không thay cho smoke test active-session /usr/bin/security và quyền đọc của agy.
+- Smoke test active-session trên tài khoản/môi trường thử nghiệm macOS, có kế hoạch phục hồi; không sửa item phiên người dùng chỉ để chứng minh plan.
+- Không chạy probe/smoke macOS trong lượt viết tài liệu trên Windows này. Agent triển khai phải báo rõ kết quả thực chạy và các case chưa kiểm chứng.
+
+### 11.6. Điều chỉnh thứ tự triển khai
+
+1. Phân biệt lỗi đọc Keychain và NotFound; xác định capability authoritative secure store cho macOS.
+2. Hoàn thiện kết quả transaction/rollback cho cả Windows và macOS, giữ ngoại lệ Linux/backend giả đã được chủ động cho phép.
+3. Fallback dùng phân loại lỗi riêng ứng viên so với lỗi chung session store.
+4. Sync settings/timer, README/comment và ma trận kiểm chứng trên từng OS.
+5. Bàn giao kết quả Windows và macOS riêng; không dùng kết quả test của một platform để xác nhận platform còn lại.
