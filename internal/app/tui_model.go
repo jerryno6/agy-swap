@@ -107,18 +107,20 @@ type tuiState struct {
 	historyIndex   int
 	doctorChecks   []doctorCheck
 	doctorHealthy  bool
-	backupPath     string
-	quitRequested  bool
-	vault          AccountVault
+	backupPath            string
+	quitRequested         bool
+	vault                 AccountVault
+	recentChangedAccounts map[string]bool
 }
 
 func newTUIState(accounts *Accounts, current string) *tuiState {
 	state := &tuiState{
-		accounts:      accounts,
-		current:       current,
-		quotaErrors:   map[string]string{},
-		messageType:   "info",
-		motionEnabled: tuiMotionEnabled(),
+		accounts:              accounts,
+		current:               current,
+		quotaErrors:           map[string]string{},
+		messageType:           "info",
+		motionEnabled:         tuiMotionEnabled(),
+		recentChangedAccounts: map[string]bool{},
 	}
 	state.active = localActiveEmail(accounts, current)
 	state.clampSelection()
@@ -225,6 +227,31 @@ func (s *tuiState) setAccounts(accounts *Accounts) {
 	s.clampSelection()
 	if local := localActiveEmail(s.accounts, s.current); local != "" {
 		s.active = local
+	}
+}
+
+func (s *tuiState) updateRecentQuotaChanges(newAccounts *Accounts) {
+	if s.accounts == nil || newAccounts == nil {
+		return
+	}
+	if s.recentChangedAccounts == nil {
+		s.recentChangedAccounts = make(map[string]bool)
+	} else {
+		for k := range s.recentChangedAccounts {
+			delete(s.recentChangedAccounts, k)
+		}
+	}
+	for _, email := range newAccounts.Order {
+		oldAcc := s.accounts.ByEmail[email]
+		newAcc := newAccounts.ByEmail[email]
+		if oldAcc == nil || newAcc == nil {
+			continue
+		}
+		oldW, old5h, oldOk := extractAccountQuotaPercentages(oldAcc)
+		newW, new5h, newOk := extractAccountQuotaPercentages(newAcc)
+		if oldOk && newOk && (oldW != newW || old5h != new5h) {
+			s.recentChangedAccounts[email] = true
+		}
 	}
 }
 

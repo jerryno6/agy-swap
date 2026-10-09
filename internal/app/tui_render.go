@@ -29,6 +29,7 @@ type tuiAccountView struct {
 	avatar          string
 	selected        bool
 	active          bool
+	recentChanged   bool
 	health          string
 	tone            tuiHealthTone
 	needsAttention  bool
@@ -347,10 +348,11 @@ func (a *Application) tuiAccountView(state *tuiState, email string, now time.Tim
 		email:    email,
 		name:     name,
 		avatar:   avatar(name, email, a.color),
-		selected: strings.EqualFold(email, state.selectedEmail),
-		active:   strings.EqualFold(email, state.active),
-		health:   health,
-		tone:     tone,
+		selected:      strings.EqualFold(email, state.selectedEmail),
+		active:        strings.EqualFold(email, state.active),
+		recentChanged: state != nil && state.recentChangedAccounts[email],
+		health:        health,
+		tone:          tone,
 	}
 	if state != nil {
 		if needs, reason := state.accountNeedsAttention(email); needs {
@@ -391,8 +393,15 @@ func (a *Application) tuiActiveMarker(view tuiAccountView) string {
 	return a.p.DarkGray + "·" + a.p.Reset
 }
 
+func (a *Application) tuiRecentMarker(view tuiAccountView) string {
+	if view.recentChanged {
+		return a.p.Yellow + "●" + a.p.Reset
+	}
+	return a.p.DarkGray + "·" + a.p.Reset
+}
+
 func (a *Application) tuiAccountIdentityLine(view tuiAccountView, state *tuiState) string {
-	return fmt.Sprintf("%s %s %s %s %s", a.tuiSelectionMarker(view, state), a.tuiActiveMarker(view), view.avatar, a.tuiIdentity(view.name), a.tuiSecondary("<"+view.email+">"))
+	return fmt.Sprintf("%s %s %s %s %s %s", a.tuiSelectionMarker(view, state), a.tuiActiveMarker(view), a.tuiRecentMarker(view), view.avatar, a.tuiIdentity(view.name), a.tuiSecondary("<"+view.email+">"))
 }
 
 func (a *Application) renderAccountRow(view tuiAccountView, width int) string {
@@ -415,7 +424,7 @@ func (a *Application) tuiWideBody(state *tuiState, width, height int) []string {
 	g.rightWidth = maxInt(1, totalAvail-g.leftWidth)
 	lines := []string{panelDivider(g, a.p)}
 	if g.bodyRows > 1 {
-		leftTitle := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  ❯ selected · ● active" + a.p.Reset
+		leftTitle := a.tuiSectionTitle("ACCOUNTS") + "  " + a.p.Gray + fmt.Sprintf("%d", len(state.visibleEmails())) + "  ❯ selected · ● active · " + a.p.Yellow + "●" + a.p.Gray + " changed" + a.p.Reset
 		rightTitle := a.tuiSectionTitle("ACCOUNT HEALTH")
 		lines = append(lines, panelRow(leftTitle, rightTitle, g, a.p))
 	}
@@ -642,6 +651,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 	columns := []string{
 		fitVisible("S", 1, a.p),
 		fitVisible("A", 1, a.p),
+		fitVisible("R", 1, a.p),
 		fitVisible("TAG", markerWidth, a.p),
 		fitVisible("ACCOUNT", identityWidth, a.p),
 		fitVisible("HEALTH", healthWidth, a.p),
@@ -683,6 +693,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
+				fitVisible(a.tuiRecentMarker(view), 1, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
 				fitVisible(identity, identityWidth, a.p),
 				fitVisible(health, healthWidth, a.p),
@@ -737,6 +748,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 			cells := []string{
 				fitVisible(a.tuiSelectionMarker(view, state), 1, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
+				fitVisible(a.tuiRecentMarker(view), 1, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
 				fitVisible(identity, identityWidth, a.p),
 				fitVisible(health, healthWidth, a.p),
@@ -770,10 +782,10 @@ func tuiAccountColumnWidths(width int) (marker, identity, health int) {
 	if width >= 48 && health < 19 {
 		health = 19
 	}
-	identity = width - marker - health - 6 // two marker columns plus four spaces
+	identity = width - marker - health - 8 // three marker columns (S, A, R) plus five spaces
 	if identity < 12 {
 		health = maxInt(10, health-(12-identity))
-		identity = width - marker - health - 6
+		identity = width - marker - health - 8
 	}
 	return marker, maxInt(1, identity), maxInt(1, health)
 }
@@ -1053,7 +1065,7 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"a           Add account",
 		"d           Delete selected account",
 		"n           Choose next available account",
-		"N (Shift+N) Toggle auto-next (5h < 20% or weekly < 15%)",
+		"N (Shift+N) Toggle auto-next (5h < 25% or weekly < 15%)",
 		"t           Toggle manual tier",
 		"m           Move tokens into the vault",
 		"l           Log out",

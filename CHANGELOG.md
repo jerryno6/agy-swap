@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.8
+
+- Settings: configurable auto-next thresholds for 5h window (default 25%) and weekly window (default 15%), renamed to `Auto next interval`.
+- TUI: added `R` (Recent Changed) column next to `A` (Active) displaying a yellow dot indicator when an account's quota percentage changed during the most recent refresh.
+- Auto-Next: candidate fallback iteration on rotation failure and periodic settings synchronization from CLI into running TUI.
+- Security: authoritative secure store validation for macOS Keychain.
+
 ## 3.1.7
 
 - TUI: Thêm phím nóng 'w' và command palette action để warm up quota 5h (gửi prompt 'hi' trực tiếp tới Gemini API mà không cần switch active account).

@@ -80,6 +80,8 @@ type UIConfig struct {
 	SplitOffset             int  `json:"split_offset,omitempty"`
 	AutoNext                bool `json:"auto_next,omitempty"`
 	AutoNextIntervalSeconds int  `json:"auto_next_interval_seconds,omitempty"`
+	AutoNextWeeklyThreshold int  `json:"auto_next_weekly_threshold,omitempty"`
+	AutoNext5hThreshold     int  `json:"auto_next_5h_threshold,omitempty"`
 }
 
 func defaultSettings() AppSettings {
@@ -93,7 +95,7 @@ func defaultSettings() AppSettings {
 		Notifications: NotificationConfig{Threshold: 20, CooldownSeconds: 1800},
 		History:       HistoryConfig{Enabled: true, RetentionDays: 30, MaxBytes: maxHistoryBytes},
 		Targets:       map[string]TargetConfig{},
-		UI:            UIConfig{AutoNextIntervalSeconds: 300},
+		UI:            UIConfig{AutoNextIntervalSeconds: 300, AutoNextWeeklyThreshold: 15, AutoNext5hThreshold: 25},
 	}
 }
 
@@ -152,6 +154,18 @@ func normalizeSettings(s AppSettings) (AppSettings, error) {
 	}
 	if s.UI.AutoNextIntervalSeconds < 10 || s.UI.AutoNextIntervalSeconds > 86400 {
 		return AppSettings{}, errors.New("ui auto_next_interval_seconds must be between 10 and 86400")
+	}
+	if s.UI.AutoNextWeeklyThreshold <= 0 {
+		s.UI.AutoNextWeeklyThreshold = defaults.UI.AutoNextWeeklyThreshold
+	}
+	if s.UI.AutoNextWeeklyThreshold < 1 || s.UI.AutoNextWeeklyThreshold > 100 {
+		return AppSettings{}, errors.New("ui auto_next_weekly_threshold must be between 1 and 100")
+	}
+	if s.UI.AutoNext5hThreshold <= 0 {
+		s.UI.AutoNext5hThreshold = defaults.UI.AutoNext5hThreshold
+	}
+	if s.UI.AutoNext5hThreshold < 1 || s.UI.AutoNext5hThreshold > 100 {
+		return AppSettings{}, errors.New("ui auto_next_5h_threshold must be between 1 and 100")
 	}
 	if s.UI.SplitOffset < -40 || s.UI.SplitOffset > 40 {
 		s.UI.SplitOffset = 0

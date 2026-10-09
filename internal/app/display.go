@@ -307,6 +307,23 @@ func formatHealthResetDaily(resetAt time.Time, now time.Time) string {
 	return fmt.Sprintf("%2dm", minutes)
 }
 
+// extractAccountQuotaPercentages returns the weekly and 5h quota percentages for an account.
+func extractAccountQuotaPercentages(account Account) (weeklyPct, fiveHourPct int, ok bool) {
+	weekly, daily, found := geminiQuotaBuckets(account)
+	if !found {
+		return -1, -1, false
+	}
+	wPct := -1
+	if weekly.found {
+		wPct = int(math.Floor(max(0, min(1, weekly.fraction))*100 + 1e-9))
+	}
+	dPct := -1
+	if daily.found {
+		dPct = int(math.Floor(max(0, min(1, daily.fraction))*100 + 1e-9))
+	}
+	return wPct, dPct, true
+}
+
 func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone) {
 	weekly, daily, found := geminiQuotaBuckets(account)
 	if !found {

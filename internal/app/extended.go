@@ -624,6 +624,18 @@ func setConfigValue(settings *AppSettings, key, value string) error {
 			return err
 		}
 		settings.UI.AutoNextIntervalSeconds = parsed
+	case "ui.auto_next_weekly_threshold", "ui.auto_next_weekly", "auto_next_weekly_threshold", "auto_next_weekly":
+		parsed, err := parseInt(1, 100)
+		if err != nil {
+			return err
+		}
+		settings.UI.AutoNextWeeklyThreshold = parsed
+	case "ui.auto_next_5h_threshold", "ui.auto_next_5h", "auto_next_5h_threshold", "auto_next_5h":
+		parsed, err := parseInt(1, 100)
+		if err != nil {
+			return err
+		}
+		settings.UI.AutoNext5hThreshold = parsed
 	default:
 		return fmt.Errorf("unknown configuration key %q", key)
 	}

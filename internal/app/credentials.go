@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 )
 
 type CredentialBackend interface {
@@ -22,6 +23,10 @@ type sessionPreparer interface {
 	PrepareSession(string) (string, error)
 }
 
+type authoritativeSecureStore interface {
+	AuthoritativeSecure() bool
+}
+
 type osCredentialBackend struct{}
 
 func (osCredentialBackend) Get(ctx context.Context) string { return platformCredentialGet(ctx) }
@@ -29,6 +34,9 @@ func (osCredentialBackend) Set(ctx context.Context, token string) bool {
 	return platformCredentialSet(ctx, token)
 }
 func (osCredentialBackend) Delete(ctx context.Context) bool { return platformCredentialDelete(ctx) }
+func (osCredentialBackend) AuthoritativeSecure() bool {
+	return runtime.GOOS == "darwin"
+}
 
 type Credentials struct {
 	paths   Paths
@@ -185,6 +193,9 @@ func (c *Credentials) applyUnlocked(ctx context.Context, tokenData, email string
 		if err != nil {
 			return false
 		}
+	}
+	if auth, ok := c.backend.(authoritativeSecureStore); ok && auth.AuthoritativeSecure() {
+		requireSecure = true
 	}
 	previous := c.Secure(ctx)
 	if previous == prepared {

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	// AutoNext5hThreshold is the strict upper bound for the 5-hour rolling quota window (20%).
-	AutoNext5hThreshold = 0.20
+	// AutoNext5hThreshold is the strict upper bound for the 5-hour rolling quota window (25%).
+	AutoNext5hThreshold = 0.25
 
 	// AutoNextWeeklyThreshold is the strict upper bound for the weekly quota window (15%).
 	AutoNextWeeklyThreshold = 0.15
@@ -17,6 +17,19 @@ const (
 	// AutoNextMaxQuotaAge is the maximum allowed age of a quota snapshot before it is considered stale.
 	AutoNextMaxQuotaAge = 15 * time.Minute
 )
+
+// autoNextThresholdLimits returns threshold fractions (0.0 - 1.0) configured in settings.
+func autoNextThresholdLimits(settings AppSettings) (weekly, fiveHour float64) {
+	weekly = AutoNextWeeklyThreshold
+	fiveHour = AutoNext5hThreshold
+	if settings.UI.AutoNextWeeklyThreshold > 0 {
+		weekly = float64(settings.UI.AutoNextWeeklyThreshold) / 100.0
+	}
+	if settings.UI.AutoNext5hThreshold > 0 {
+		fiveHour = float64(settings.UI.AutoNext5hThreshold) / 100.0
+	}
+	return weekly, fiveHour
+}
 
 // AutoNextThresholdResult contains detailed results of quota threshold evaluation.
 type AutoNextThresholdResult struct {
@@ -31,17 +44,23 @@ type AutoNextThresholdResult struct {
 }
 
 // CheckAutoNextThreshold evaluates whether an account's quota has dropped strictly below the
-// auto-next thresholds (5h < 0.20 OR weekly < 0.15).
+// default auto-next thresholds (5h < 0.25 OR weekly < 0.15).
+func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThresholdResult) {
+	return CheckAutoNextThresholdWithLimits(account, now, AutoNextWeeklyThreshold, AutoNext5hThreshold)
+}
+
+// CheckAutoNextThresholdWithLimits evaluates whether an account's quota has dropped strictly below the
+// configured auto-next thresholds.
 //
 // Rules:
 //   - Min over ALL matching buckets across all quota groups.
-//   - Strict OR condition: (has5h && min5h < 0.20) || (hasWeekly && minWeekly < 0.15).
-//   - Equality does NOT trigger (0.20 or 0.15 does not trigger).
+//   - Strict OR condition: (has5h && min5h < fiveHourThreshold) || (hasWeekly && minWeekly < weeklyThreshold).
+//   - Equality does NOT trigger.
 //   - Missing windows are NOT treated as zero and cannot trigger.
 //   - Unusable fractions (NaN, Inf, < 0.0, or > 1.0) are ignored.
 //   - Unknown data (nil account, nil snapshot, malformed timestamps/groups) fails closed (returns false).
-//   - Stale observations (> 2 minutes) or observations in the future are rejected (returns false).
-func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThresholdResult) {
+//   - Stale observations (> AutoNextMaxQuotaAge) or observations in the future are rejected (returns false).
+func CheckAutoNextThresholdWithLimits(account Account, now time.Time, weeklyThreshold, fiveHourThreshold float64) (bool, AutoNextThresholdResult) {
 	var res AutoNextThresholdResult
 	if account == nil {
 		return false, res
@@ -68,7 +87,7 @@ func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThres
 		res.Future = true
 		return false, res
 	}
-	// Reject stale observations (> 2 minutes)
+	// Reject stale observations (> 15 minutes)
 	if now.Sub(observed) > AutoNextMaxQuotaAge {
 		res.Stale = true
 		return false, res
@@ -116,16 +135,23 @@ func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThres
 	}
 	res.Valid = true
 
-	if (res.Has5h && res.Min5h < AutoNext5hThreshold) || (res.HasWeekly && res.MinWeekly < AutoNextWeeklyThreshold) {
+	if (res.Has5h && res.Min5h < fiveHourThreshold) || (res.HasWeekly && res.MinWeekly < weeklyThreshold) {
 		res.Triggered = true
 		return true, res
 	}
 	return false, res
 }
 
-// ShouldAutoNext returns true if the account is eligible for auto-next rotation due to low quota.
+// ShouldAutoNext returns true if the account is eligible for auto-next rotation due to low quota with defaults.
 func ShouldAutoNext(account Account, now time.Time) bool {
 	triggered, _ := CheckAutoNextThreshold(account, now)
+	return triggered
+}
+
+// ShouldAutoNextWithSettings returns true if the account is eligible for auto-next rotation with configured settings.
+func ShouldAutoNextWithSettings(account Account, settings AppSettings, now time.Time) bool {
+	weekly, fiveHour := autoNextThresholdLimits(settings)
+	triggered, _ := CheckAutoNextThresholdWithLimits(account, now, weekly, fiveHour)
 	return triggered
 }
 
@@ -178,9 +204,10 @@ func hasQuotaError(quotaErrors map[string]string, email string) bool {
 
 // AutoNextCandidateOptions specifies optional filters for candidate selection.
 type AutoNextCandidateOptions struct {
-	Profile string
-	Family  string
-	Tag     string
+	Profile        string
+	Family         string
+	Tag            string
+	ExcludedEmails []string
 }
 
 // autoNextAccountRemaining calculates the limiting remaining percentage (0-100)
@@ -318,6 +345,10 @@ func SelectAutoNextCandidateWithOptions(
 		if activeEmail != "" && strings.EqualFold(email, activeEmail) {
 			continue
 		}
+		// Exclude attempted
+		if len(opts.ExcludedEmails) > 0 && containsStringValue(opts.ExcludedEmails, email) {
+			continue
+		}
 		// Tag filter
 		if opts.Tag != "" && !containsStringValue(settings.Tags[email], opts.Tag) {
 			continue
@@ -338,9 +369,10 @@ func SelectAutoNextCandidateWithOptions(
 		if !isSnapshotFresh(account, now) {
 			continue
 		}
-		// Require evaluated result.Valid == true and !triggered.
+		// Require evaluated result.Valid == true and !triggered using configured thresholds.
 		// Rejects candidate accounts with invalid-only fractions (1.5, NaN, Inf) or unknown-window snapshots.
-		triggered, threshRes := CheckAutoNextThreshold(account, now)
+		weeklyLimit, fiveHourLimit := autoNextThresholdLimits(settings)
+		triggered, threshRes := CheckAutoNextThresholdWithLimits(account, now, weeklyLimit, fiveHourLimit)
 		if !threshRes.Valid || triggered {
 			continue
 		}

@@ -746,6 +746,24 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				a.renderTUI(state, outFile)
 			}
 		case <-credentialTicker.C:
+			if freshSettings, err := a.loadSettings(); err == nil {
+				if freshSettings.revision != state.settings.revision || !state.settingsLoaded {
+					prevInterval := a.autoNextInterval(state.settings)
+					newInterval := a.autoNextInterval(freshSettings)
+					prevAutoNext := state.settings.UI.AutoNext
+					state.settings = freshSettings
+					state.settingsLoaded = true
+					if newInterval != prevInterval {
+						if a.quota != nil {
+							a.quota.SetCacheTTL(newInterval)
+						}
+						quotaTicker.Reset(newInterval)
+					}
+					if freshSettings.UI.AutoNext != prevAutoNext {
+						a.renderTUI(state, outFile)
+					}
+				}
+			}
 			newToken := a.credentials.Current(ctx)
 			if newToken != current {
 				current = newToken
@@ -774,6 +792,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				}
 				refreshing = false
 				state.refreshing = false
+				state.updateRecentQuotaChanges(value.accounts)
 				state.setAccounts(value.accounts)
 				state.quotaErrors = value.quotaErrors
 				if len(value.quotaErrors) > 0 {

@@ -45,7 +45,7 @@ Requirements: Go 1.26 or later. macOS source builds require Xcode Command Line T
 ```bash
 git clone https://github.com/aklkbqx/agy-swap.git
 cd agy-swap
-go build -trimpath -ldflags "-s -w -X main.version=3.1.7 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
+go build -trimpath -ldflags "-s -w -X main.version=3.1.8 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
 ./agy-swap version
 ```
 
@@ -235,10 +235,11 @@ In interactive mode, agy-swap can automatically rotate to the next healthy accou
 - **Default state:** OFF by default (`AUTO-NEXT: OFF [N]`).
 - **Persisted choice:** Toggling auto-next with `Shift+N` (`N`), the command palette (`Ctrl-K` → `Toggle auto-next`), or through Settings (`s` → `e` → `ui.auto_next`) persists the choice across sessions in `config.json`.
 - **Always visible badge:** The top frame border permanently displays `AUTO-NEXT: ON [N]` in green or `AUTO-NEXT: OFF [N]` in gray across every view and overlay, even in compact 28x12 terminals.
-- **Refresh trigger:** Auto-next is evaluated immediately after a successful quota refresh (either the 60-second periodic background sync or a manual `r` refresh).
-- **Strict OR boundaries:** Auto-switch triggers only when the active account's remaining capacity drops strictly below 20% on the 5-hour rolling window (`5h < 20%`) OR strictly below 15% on the weekly window (`weekly < 15%`). Equal or higher capacity does not trigger rotation.
-- **Safe switching:** Candidate selection skips accounts in cooldown, stale snapshots (>2 minutes), refresh errors, and accounts that are also below thresholds. The switch executes atomically under a session lock (`.session.lock`), preserving active session safety.
-- **Settings display mode:** The current auto-next mode is displayed in the Settings view (`s`) and editable via the settings form.
+- **Refresh trigger:** Auto-next is evaluated immediately after a successful quota refresh (either the background sync, default 300 seconds configurable via `ui.auto_next_interval_seconds`, or a manual `r` refresh).
+- **Strict OR boundaries:** Auto-switch triggers only when the active account's remaining capacity drops strictly below the configured threshold (default `5h < 25%` OR `weekly < 15%`, customizable in Settings via `ui.auto_next_5h_threshold` and `ui.auto_next_weekly_threshold`). Equal or higher capacity does not trigger rotation.
+- **Safe switching:** Candidate selection skips accounts in cooldown, stale snapshots (>15 minutes), refresh errors, and accounts that are also below thresholds. If an eligible candidate fails to apply, auto-next safely falls back to the next candidate. The switch executes atomically under a session lock (`.session.lock`), preserving active session safety.
+- **Settings display mode:** The current auto-next mode, interval, and thresholds are displayed in the Settings view (`s`) and editable via the settings form (`e`).
+- **Recent change indicator (R column):** The accounts table displays an `R` column next to `A` (Active) with a yellow dot indicator (`●`) highlighting accounts whose quota percentages changed during the most recent refresh.
 
 ## Security and privacy
 

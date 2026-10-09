@@ -511,7 +511,7 @@ func TestTUIWideAccountTableUsesStableColumns(t *testing.T) {
 	if !strings.Contains(rows[0], "ACCOUNT") || !strings.Contains(rows[0], "HEALTH") {
 		t.Fatalf("missing table headers: %q", rows[0])
 	}
-	if !strings.Contains(rows[2], "❯ · [AL]") || !strings.Contains(rows[2], "Alpha") {
+	if !strings.Contains(rows[2], "❯ · · [AL]") || !strings.Contains(rows[2], "Alpha") {
 		t.Fatalf("selected row lost its identity: %q", rows[2])
 	}
 	for i, row := range rows {

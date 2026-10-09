@@ -328,6 +328,11 @@ func (a *Application) handleAutoNext(
 	if event.revision != refreshRevision {
 		return current
 	}
+	// Reload settings right before auto-next check to pick up any changes while refresh was in flight
+	if freshSettings, err := a.loadSettings(); err == nil {
+		state.settings = freshSettings
+		state.settingsLoaded = true
+	}
 	// AutoNext must be ON at completion
 	if !state.settings.UI.AutoNext {
 		return current
@@ -377,72 +382,90 @@ func (a *Application) handleAutoNext(
 		return current
 	}
 
-	// Active account quota must be below threshold (5h < 20% OR weekly < 15%)
-	if !ShouldAutoNext(activeAccount, now) {
+	// Active account quota must be below configured thresholds
+	if !ShouldAutoNextWithSettings(activeAccount, state.settings, now) {
 		return current
 	}
 
-	// Select best eligible candidate (excludes active, cooldowns, errors, stale, below-threshold)
-	candidateAccount, ok := SelectAutoNextCandidate(event.accounts, activeEmail, state.settings, event.quotaErrors, now)
-	if !ok {
-		// No eligible candidate retains current with concise info
-		state.showToast("No eligible auto-next account", "info")
-		return current
-	}
-	candidateEmail := getString(candidateAccount, "email")
-	if candidateEmail == "" {
-		state.showToast("No eligible auto-next account", "info")
+	// Select best eligible candidate with safe fallback
+	var excludedEmails []string
+	for len(excludedEmails) < event.accounts.Len() {
+		candidateAccount, ok := SelectAutoNextCandidateWithOptions(
+			event.accounts,
+			activeEmail,
+			state.settings,
+			event.quotaErrors,
+			now,
+			AutoNextCandidateOptions{ExcludedEmails: excludedEmails},
+		)
+		if !ok {
+			if len(excludedEmails) > 0 {
+				state.showToast("All eligible auto-next candidates failed", "error")
+			} else {
+				state.showToast("No eligible auto-next account", "info")
+			}
+			return current
+		}
+		candidateEmail := getString(candidateAccount, "email")
+		if candidateEmail == "" {
+			break
+		}
+
+		token, tokenErr := a.accountToken(ctx, candidateAccount)
+		if tokenErr != nil {
+			excludedEmails = append(excludedEmails, candidateEmail)
+			continue
+		}
+
+		// Short native transaction under SessionLock
+		lock, err := acquireFileLock(a.paths.SessionLock)
+		if err != nil {
+			state.showToast("Auto-switch failed: "+err.Error(), "error")
+			return current
+		}
+
+		// Recheck exact identity under SessionLock before applying, protecting concurrent/external switches
+		nowSession := a.credentials.Current(ctx)
+		if nowSession != event.sessionToken || nowSession != current {
+			_ = lock.Close()
+			return current
+		}
+		if a.credentials.Secure(ctx) != event.secureToken {
+			_ = lock.Close()
+			return current
+		}
+		if a.credentials.OAuthToken() != event.oauthToken {
+			_ = lock.Close()
+			return current
+		}
+
+		applied := a.credentials.applyUnlocked(ctx, token, candidateEmail)
+		_ = lock.Close()
+
+		if !applied {
+			excludedEmails = append(excludedEmails, candidateEmail)
+			continue
+		}
+
+		// Record switch in history once
+		a.recordSwitch(candidateEmail)
+
+		// Update current, active, state.current, selection consistently on success
+		current = a.credentials.Current(ctx)
+		if current == "" {
+			current = token
+		}
+		state.current = current
+		state.active = candidateEmail
+		state.selectedEmail = candidateEmail
+		state.resolvingToken = ""
+		state.clampSelection()
+		state.showToast("Auto-switched to "+candidateEmail, "success")
+		state.beginAnimation("success", 360*time.Millisecond)
 		return current
 	}
 
-	// Short native transaction under SessionLock
-	lock, err := acquireFileLock(a.paths.SessionLock)
-	if err != nil {
-		state.showToast("Auto-switch failed: "+err.Error(), "error")
-		return current
-	}
-	defer func() { _ = lock.Close() }()
-
-	// Recheck exact identity under SessionLock before applying, protecting concurrent/external switches
-	nowSession := a.credentials.Current(ctx)
-	if nowSession != event.sessionToken || nowSession != current {
-		return current
-	}
-	if a.credentials.Secure(ctx) != event.secureToken {
-		return current
-	}
-	if a.credentials.OAuthToken() != event.oauthToken {
-		return current
-	}
-
-	token, tokenErr := a.accountToken(ctx, candidateAccount)
-	if tokenErr != nil {
-		state.showToast("Auto-switch failed: "+tokenErr.Error(), "error")
-		return current
-	}
-
-	// Reuse applyUnlocked rollback behavior
-	if !a.credentials.applyUnlocked(ctx, token, candidateEmail) {
-		state.showToast("Auto-switch failed", "error")
-		return current
-	}
-
-	// Record switch in history once
-	a.recordSwitch(candidateEmail)
-
-	// Update current, active, state.current, selection consistently on success
-	current = a.credentials.Current(ctx)
-	if current == "" {
-		current = token
-	}
-	state.current = current
-	state.active = candidateEmail
-	state.selectedEmail = candidateEmail
-	state.resolvingToken = ""
-	state.clampSelection()
-	state.showToast("Auto-switched to "+candidateEmail, "success")
-	state.beginAnimation("success", 360*time.Millisecond)
-
+	state.showToast("No eligible auto-next account", "info")
 	return current
 }
 
