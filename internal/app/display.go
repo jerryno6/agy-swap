@@ -319,14 +319,16 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 	weeklyPct := "  --"
 	weeklyResetStr := " --"
 	if weekly.found {
-		weeklyPct = fmt.Sprintf("%4s", fmt.Sprintf("%.0f%%", weekly.fraction*100))
+		weeklyRemain := int(math.Floor(max(0, min(1, weekly.fraction))*100 + 1e-9))
+		weeklyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", weeklyRemain))
 		weeklyResetStr = formatHealthResetWeekly(weekly.resetAt, now)
 	}
 
 	dailyPct := "  --"
 	dailyResetStr := " --"
 	if daily.found {
-		dailyPct = fmt.Sprintf("%4s", fmt.Sprintf("%.0f%%", daily.fraction*100))
+		dailyRemain := int(math.Floor(max(0, min(1, daily.fraction))*100 + 1e-9))
+		dailyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", dailyRemain))
 		dailyResetStr = formatHealthResetDaily(daily.resetAt, now)
 	}
 

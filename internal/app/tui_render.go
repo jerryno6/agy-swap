@@ -1002,7 +1002,7 @@ func (a *Application) tuiFooterLines(state *tuiState, width int) []string {
 	g := newTUIGeometry(width, 12)
 	footer := formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 	if state.view == tuiViewDashboard && g.layout == tuiLayoutWide {
-		footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[[]/[]]", "Resize", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
+		footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[w]", "Warmup", "[[]/[]]", "Resize", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 	}
 	if state.view != tuiViewDashboard {
 		footer = formatKeycaps(a.p, "[↑↓]", "Navigate", "[Enter]", "Edit", "[Esc]", "Dashboard", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
@@ -1049,6 +1049,7 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"Ctrl-K / :  Open action palette",
 		"p h s o b   Profiles, history, settings, doctor, backup",
 		"r           Refresh quota",
+		"w           Warm up 5h window (send 'hi' to Gemini)",
 		"a           Add account",
 		"d           Delete selected account",
 		"n           Choose next available account",

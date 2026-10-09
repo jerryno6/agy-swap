@@ -49,7 +49,7 @@ func isExtendedCommand(argv []string) bool {
 			continue
 		}
 		switch arg {
-		case "doctor", "config", "alias", "tag", "profile", "bind", "unbind", "recommend", "statusline", "watch", "history", "stats", "forecast", "backup", "metrics", "completion", "account", "target", "run":
+		case "doctor", "config", "alias", "tag", "profile", "bind", "unbind", "recommend", "statusline", "watch", "history", "stats", "forecast", "backup", "metrics", "completion", "account", "target", "run", "warmup":
 			return true
 		default:
 			return false
@@ -311,6 +311,8 @@ func (a *Application) runExtended(ctx context.Context, argv []string) int {
 		code = a.cmdTarget(opts, positional)
 	case "run":
 		code = a.cmdRunNow(ctx, opts, positional)
+	case "warmup":
+		code = a.cmdWarmup(ctx, opts, positional)
 	default:
 		return a.extendedError(command, opts, fmt.Errorf("unknown command %q", command))
 	}

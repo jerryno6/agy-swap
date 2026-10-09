@@ -25,7 +25,7 @@ var securityBinary = "/usr/bin/security"
 func geminiSecurityArgs(action, token string) []string {
 	switch action {
 	case "set":
-		return []string{"add-generic-password", "-U", "-a", "antigravity", "-s", "gemini", "-w", token, "-A"}
+		return []string{"add-generic-password", "-U", "-a", "antigravity", "-s", "gemini", "-w", token}
 	case "get":
 		return []string{"find-generic-password", "-a", "antigravity", "-s", "gemini", "-w"}
 	case "delete":

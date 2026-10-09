@@ -41,6 +41,7 @@ func tuiActions(state *tuiState) []tuiAction {
 		{ID: "next-account", Label: "Choose next available", Description: "Pick the next healthy account", Shortcut: "n", Section: "Accounts", Enabled: hasAccounts},
 		{ID: "toggle-auto-next", Label: "Toggle auto-next", Description: "Automatically switch when quota drops below threshold", Shortcut: "N", Section: "Accounts", Enabled: true},
 		{ID: "refresh", Label: "Refresh quota", Description: "Fetch fresh usage from the provider", Shortcut: "r", Section: "Accounts", Enabled: hasAccounts},
+		{ID: "warmup", Label: "Warm up 5h quota", Description: "Send 'hi' to Gemini to start 5h quota window", Shortcut: "w", Section: "Accounts", Enabled: hasAccounts},
 		{ID: "edit-tags", Label: "Edit account tags", Description: "Add searchable labels to the selected account", Shortcut: "e", Section: "Accounts", Enabled: hasAccounts},
 		{ID: "toggle-tier", Label: "Toggle manual tier", Description: "Set or clear a local tier override", Shortcut: "t", Section: "Accounts", Enabled: hasAccounts},
 		{ID: "migrate-vault", Label: "Move tokens into the vault", Description: "Move legacy tokens from accounts.json into the vault", Shortcut: "m", Section: "Security", Enabled: hasAccounts},

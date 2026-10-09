@@ -530,6 +530,28 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		armFrame()
 	}
 
+	performWarmup := func() {
+		email, _, ok := state.selectedAccount()
+		if !ok || email == "" {
+			state.showToast("No account selected to warm up", "error")
+			a.renderTUI(state, outFile)
+			armFrame()
+			return
+		}
+		if a.demo {
+			demoNotice()
+			return
+		}
+
+		targetEmail := email
+		startJob("warmup", "Sending 'hi' to Gemini for "+targetEmail+"…", func(jobCtx context.Context) tuiJobResult {
+			if err := a.SendGeminiWarmup(jobCtx, targetEmail); err != nil {
+				return tuiJobResult{err: err}
+			}
+			return tuiJobResult{message: "✓ 5h window started for " + targetEmail}
+		})
+	}
+
 	submitForm := func() {
 		if state.form == nil {
 			state.mode = tuiBrowse
@@ -650,6 +672,8 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		case "refresh":
 			state.message, state.messageType = "Refreshing quota…", "info"
 			startRefresh(true)
+		case "warmup":
+			performWarmup()
 		case "toggle-auto-next":
 			if a.toggleAutoNext(state) {
 				armFrame()
@@ -797,6 +821,9 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					current = a.credentials.Current(ctx)
 					state.current = current
 					startActiveResolve()
+				}
+				if value.kind == "warmup" && value.err == nil {
+					startRefresh(true)
 				}
 				a.renderTUI(state, outFile)
 				armFrame()
@@ -1172,6 +1199,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					}
 				case "l":
 					suspend(func() int { return a.cmdLogout(ctx) })
+				case "w", "shift-w":
+					if state.view == tuiViewDashboard || state.view == tuiViewQuota {
+						performWarmup()
+					}
 				case "enter":
 					switch state.view {
 					case tuiViewDashboard, tuiViewQuota:

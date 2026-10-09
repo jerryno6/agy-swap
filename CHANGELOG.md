@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.7
+
+- TUI: Thêm phím nóng 'w' và command palette action để warm up quota 5h (gửi prompt 'hi' trực tiếp tới Gemini API mà không cần switch active account).
+- Security: Sửa lỗi popup macOS Keychain đòi mật khẩu bằng cách loại bỏ cờ '-A' khi lưu credentials.
+- TUI: Làm tròn xuống (floor) phần trăm còn lại (%remain) trên cột HEALTH (ví dụ 99.9% hiển thị thành 99%).
+
 ## 3.1.6
 
 - TUI: update HEALTH column to display Gemini quota countdown with remaining days/hours (weekly on left, 5h rolling window on right).

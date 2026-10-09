@@ -13,7 +13,7 @@ import (
 
 func TestGeminiSecurityArgsUpdateInPlace(t *testing.T) {
 	set := geminiSecurityArgs("set", "stub-token")
-	if strings.Join(set, " ") != "add-generic-password -U -a antigravity -s gemini -w stub-token -A" {
+	if strings.Join(set, " ") != "add-generic-password -U -a antigravity -s gemini -w stub-token" {
 		t.Fatalf("set args = %q", set)
 	}
 	if strings.Contains(strings.Join(set, " "), "delete-generic-password") {
@@ -69,7 +69,7 @@ func TestPlatformCredentialSecurityStubFailure(t *testing.T) {
 	if len(calls) != 3 {
 		t.Fatalf("security invocations = %d, want 3\n%s", len(calls), data)
 	}
-	if calls[0] != "add-generic-password\n-U\n-a\nantigravity\n-s\ngemini\n-w\nstub-token\n-A" {
+	if calls[0] != "add-generic-password\n-U\n-a\nantigravity\n-s\ngemini\n-w\nstub-token" {
 		t.Fatalf("set invocation =\n%s", calls[0])
 	}
 	if strings.Contains(calls[0], "delete-generic-password") {

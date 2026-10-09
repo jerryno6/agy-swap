@@ -261,7 +261,7 @@ func TestAccountAvailabilityKeepsFamiliesIndependent(t *testing.T) {
 	reset := now.Add(3 * time.Hour)
 	account := quotaAccount("user@example.com", 0.9584, 0, reset)
 	p := makePalette(false)
-	wantReady := " 96%  3h -  96%  3h"
+	wantReady := " 95%  3h -  95%  3h"
 	if got := accountHealthCompact(account, now); got != wantReady {
 		t.Fatalf("compact health = %q, want %q", got, wantReady)
 	}

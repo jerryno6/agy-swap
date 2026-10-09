@@ -174,3 +174,93 @@ func (a *Application) prepareBoundRun(ctx context.Context, settings AppSettings,
 	}
 	return a.prepareRunAccount(ctx, email, settings)
 }
+
+func (a *Application) SendGeminiWarmup(ctx context.Context, email string) error {
+	accounts, err := a.store.Load(true)
+	if err != nil {
+		return err
+	}
+	account, ok := accounts.ByEmail[email]
+	if !ok {
+		return fmt.Errorf("account %s not found", email)
+	}
+	tokenData, err := a.accountToken(ctx, account)
+	if err != nil {
+		return fmt.Errorf("read account credential: %w", err)
+	}
+	access, refreshed, err := a.http.accessTokenData(ctx, tokenData)
+	if err != nil {
+		return err
+	}
+	if refreshed != tokenData {
+		oldRef, saved := a.saveAccountSecret(ctx, account, refreshed)
+		_ = a.store.Save(accounts)
+		if saved && oldRef != "" {
+			a.deleteReplacedSecrets(ctx, []string{oldRef})
+		}
+	}
+	info, err := a.http.cloudPost(ctx, access, "loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
+	project := ""
+	if err == nil {
+		project = getString(info, "cloudaicompanionProject")
+	}
+	if project == "" {
+		project = "aicode-consumers"
+	}
+	payload := map[string]any{
+		"project": project,
+		"model":   "gemini-3.1-flash-lite",
+		"request": map[string]any{
+			"contents": []any{
+				map[string]any{
+					"role": "user",
+					"parts": []any{
+						map[string]any{"text": "hi"},
+					},
+				},
+			},
+		},
+	}
+	if _, err := a.http.cloudPost(ctx, access, "generateContent", payload); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *Application) cmdWarmup(ctx context.Context, opts extendedOptions, positional []string) int {
+	settings, err := a.loadSettings()
+	if err != nil {
+		return a.extendedError("warmup", opts, err)
+	}
+	accounts, err := a.store.Load(true)
+	if err != nil {
+		return a.extendedError("warmup", opts, err)
+	}
+	target := opts.Account
+	if target == "" && len(positional) > 0 {
+		target = positional[0]
+	}
+	if target == "" {
+		target = a.credentials.StoredActiveEmail()
+	}
+	if target == "" && len(accounts.Order) > 0 {
+		target = accounts.Order[0]
+	}
+	if target == "" {
+		return a.extendedError("warmup", opts, errors.New("no account specified or available"))
+	}
+	targetEmail, err := resolveConfiguredTarget(target, accounts, settings)
+	if err != nil {
+		return a.extendedError("warmup", opts, err)
+	}
+	if _, ok := accounts.ByEmail[targetEmail]; !ok {
+		return a.extendedError("warmup", opts, fmt.Errorf("account %s not found", targetEmail))
+	}
+	fmt.Fprintf(a.Out, "Sending 'hi' to Gemini for %s…\n", targetEmail)
+	if err := a.SendGeminiWarmup(ctx, targetEmail); err != nil {
+		return a.extendedError("warmup", opts, err)
+	}
+	fmt.Fprintf(a.Out, "✓ 5h window started for %s.\n", targetEmail)
+	_ = a.quota.Refresh(ctx, accounts, true, nil)
+	return 0
+}
