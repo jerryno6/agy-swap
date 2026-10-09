@@ -9,7 +9,7 @@
 | `cmd/agy-swap` | Entry point. Sets `version` and `buildID`, then runs `internal/app`. |
 | `cmd/agy-swap-demo`, `cmd/agy-swap-demo-server`, `internal/demoserver` | Sample-account build of the TUI and the loopback WebSocket bridge used by `make live`. Not part of the public site. |
 | `cmd/releasetool` | Version bumps, checksums, and release asset and metadata checks. |
-| `internal/app` | CLI commands (`cli.go`, `extended.go`), TUI (`tui*.go`), account store (`store.go`, `model.go`), credentials and OS vaults (`credentials.go`, `vault*.go`, `keychain_darwin.go`, `credential_*.go`), OAuth (`oauth.go`), quota (`quota.go`, `display.go`), history and logs, backups, doctor, statusline, metrics, targets, and self-update (`updater.go`). |
+| `internal/app` | CLI commands (`cli.go`, `extended.go`), TUI (`tui*.go`), account store (`store.go`, `model.go`), credentials and OS vaults (`credentials.go`, `vault*.go`, `keychain_darwin.go`, `credential_*.go`), OAuth (`oauth.go`), quota (`quota.go`, `display.go`), verified warm-up (`warmup.go`), history and logs, backups, doctor, statusline, metrics, targets, and self-update (`updater.go`). |
 | `internal/store` | Private directories, atomic write-then-rename, and per-OS file locks (`flock` on Unix, `LockFileEx` on Windows). |
 | `internal/config` | Paths, the private directory mode, and semantic version comparison, shared by `internal/app` and `internal/store`. |
 | `internal/client` | Release tag normalization and checksum lookup used by the updater. |
@@ -25,6 +25,14 @@
 ## Network
 
 The CLI talks to Google for sign-in, account, and quota data, and to GitHub for release checks and updates. It sends no telemetry.
+
+## Warm-up
+
+CLI `warmup` and TUI `w` call the same service in `warmup.go`. The service validates account credentials, resolves the Code Assist project and Gemini 3.8 Flash Low model from the account catalog, saves a fresh 5h quota baseline, and issues one generation request. The transport disables redirect replay and chooses the configured TLS mode before sending, so generation errors never trigger another prompt.
+
+A completed text reply is required before verification. Up to three quota reads, spaced two seconds apart and bounded by a 15-second verification deadline, compare the live remaining fraction with the baseline. Only a decrease is verified; quota percentages and reset times are never synthesized. CLI JSON includes the requested and wire model IDs, `sent`, `verified`, before/after quota, and the latest successfully saved snapshot. Unverified or failed operations return exit code 1.
+
+Refreshed credentials are written to a new vault reference before saving account metadata. The previous reference remains valid until that save succeeds. Store conflicts propagate without overwriting concurrent edits. TUI queues warm-up behind an in-flight refresh, prevents competing jobs and account mutations during warm-up, and reloads persisted results on the event loop.
 
 ## TUI
 

@@ -175,58 +175,6 @@ func (a *Application) prepareBoundRun(ctx context.Context, settings AppSettings,
 	return a.prepareRunAccount(ctx, email, settings)
 }
 
-func (a *Application) SendGeminiWarmup(ctx context.Context, email string) error {
-	accounts, err := a.store.Load(true)
-	if err != nil {
-		return err
-	}
-	account, ok := accounts.ByEmail[email]
-	if !ok {
-		return fmt.Errorf("account %s not found", email)
-	}
-	tokenData, err := a.accountToken(ctx, account)
-	if err != nil {
-		return fmt.Errorf("read account credential: %w", err)
-	}
-	access, refreshed, err := a.http.accessTokenData(ctx, tokenData)
-	if err != nil {
-		return err
-	}
-	if refreshed != tokenData {
-		oldRef, saved := a.saveAccountSecret(ctx, account, refreshed)
-		_ = a.store.Save(accounts)
-		if saved && oldRef != "" {
-			a.deleteReplacedSecrets(ctx, []string{oldRef})
-		}
-	}
-	info, err := a.http.cloudPost(ctx, access, "loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
-	project := ""
-	if err == nil {
-		project = getString(info, "cloudaicompanionProject")
-	}
-	if project == "" {
-		project = "aicode-consumers"
-	}
-	payload := map[string]any{
-		"project": project,
-		"model":   "gemini-3.1-flash-lite",
-		"request": map[string]any{
-			"contents": []any{
-				map[string]any{
-					"role": "user",
-					"parts": []any{
-						map[string]any{"text": "hi"},
-					},
-				},
-			},
-		},
-	}
-	if _, err := a.http.cloudPost(ctx, access, "generateContent", payload); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (a *Application) cmdWarmup(ctx context.Context, opts extendedOptions, positional []string) int {
 	settings, err := a.loadSettings()
 	if err != nil {
@@ -256,11 +204,27 @@ func (a *Application) cmdWarmup(ctx context.Context, opts extendedOptions, posit
 	if _, ok := accounts.ByEmail[targetEmail]; !ok {
 		return a.extendedError("warmup", opts, fmt.Errorf("account %s not found", targetEmail))
 	}
-	fmt.Fprintf(a.Out, "Sending 'hi' to Gemini for %s…\n", targetEmail)
-	if err := a.SendGeminiWarmup(ctx, targetEmail); err != nil {
-		return a.extendedError("warmup", opts, err)
+	if !opts.JSON {
+		fmt.Fprintf(a.Out, "Sending 'hi' with %s for %s…\n", warmupModel, targetEmail)
 	}
-	fmt.Fprintf(a.Out, "✓ 5h window started for %s.\n", targetEmail)
-	_ = a.quota.Refresh(ctx, accounts, true, nil)
+	result, warmupErr := a.SendGeminiWarmup(ctx, targetEmail)
+	if warmupErr == nil && !result.Verified {
+		warmupErr = errors.New(result.Message())
+	}
+	if opts.JSON {
+		envelope := extendedEnvelope{Schema: stateSchema, Command: "warmup", OK: warmupErr == nil, Data: result}
+		if warmupErr != nil {
+			envelope.Error = warmupErr.Error()
+		}
+		code := a.writeJSON(envelope)
+		if warmupErr != nil {
+			return 1
+		}
+		return code
+	}
+	if warmupErr != nil {
+		return a.extendedError("warmup", opts, warmupErr)
+	}
+	fmt.Fprintln(a.Out, result.Message())
 	return 0
 }

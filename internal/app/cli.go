@@ -24,6 +24,7 @@ type Application struct {
 	In                  io.Reader
 	Out, Err            io.Writer
 	lineReader          *bufio.Reader
+	warmupMu            sync.Mutex
 	lineReaderMu        sync.Mutex
 	paths               Paths
 	store               *Store

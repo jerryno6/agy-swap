@@ -191,7 +191,7 @@ func verifyMetadata(version, root string) error {
 			}
 			return err
 		}
-		if !strings.Contains(string(data), expected) {
+		if !strings.Contains(strings.ReplaceAll(string(data), "\r\n", "\n"), expected) {
 			return fmt.Errorf("version drift in %s: expected %s", name, version)
 		}
 	}

@@ -17,13 +17,14 @@ import (
 )
 
 type HTTPService struct {
-	client      *http.Client
-	insecure    *http.Client
-	errOut      io.Writer
-	warnOnce    sync.Once
-	oauthURL    string
-	cloudAPI    string
-	userInfoURL string
+	client        *http.Client
+	insecure      *http.Client
+	errOut        io.Writer
+	warnOnce      sync.Once
+	oauthURL      string
+	cloudAPI      string
+	userInfoURL   string
+	singleAttempt bool
 }
 
 func NewHTTPService(errOut io.Writer) *HTTPService {
@@ -56,6 +57,14 @@ func allowInsecureTLS() bool {
 }
 
 func (h *HTTPService) do(request *http.Request) (*http.Response, error) {
+	if h.singleAttempt {
+		client := *h.client
+		if allowInsecureTLS() {
+			client = *h.insecure
+		}
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		return client.Do(request)
+	}
 	response, err := h.client.Do(request)
 	if err == nil || !allowInsecureTLS() {
 		return response, err

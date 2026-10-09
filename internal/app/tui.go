@@ -28,6 +28,7 @@ type tuiActiveEvent struct {
 }
 type tuiResizeEvent struct{ width, height int }
 type tuiJobEvent struct {
+	warmup        *WarmupResult
 	id            uint64
 	kind          string
 	message       string
@@ -37,6 +38,7 @@ type tuiJobEvent struct {
 }
 
 type tuiJobResult struct {
+	warmup        *WarmupResult
 	message       string
 	err           error
 	doctorChecks  []doctorCheck
@@ -163,8 +165,15 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		}()
 	}
 	refreshing := false
+	warmupRunning := false
+	pendingWarmup := ""
+	refreshQueued := false
 	var refreshRevision uint64
 	startRefresh := func(force bool) {
+		if warmupRunning {
+			refreshQueued = true
+			return
+		}
 		if refreshing {
 			return
 		}
@@ -261,6 +270,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	}
 
 	suspend := func(action func() int) int {
+		if warmupRunning {
+			state.showToast("Wait for warm-up to finish", "info")
+			return 1
+		}
 		if a.demo {
 			demoNotice()
 			return 1
@@ -298,6 +311,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 
 	var jobID uint64
 	startJob := func(kind, label string, work func(context.Context) tuiJobResult) {
+		if warmupRunning && kind != "warmup" {
+			state.showToast("Wait for warm-up to finish", "info")
+			return
+		}
 		jobID++
 		id := jobID
 		state.job = &tuiJobState{ID: id, Kind: kind, Label: label, Started: time.Now()}
@@ -307,7 +324,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		go func() {
 			result := work(workerCtx)
 			select {
-			case events <- tuiJobEvent{id: id, kind: kind, message: result.message, err: result.err, doctorChecks: result.doctorChecks, doctorHealthy: result.doctorHealthy}:
+			case events <- tuiJobEvent{id: id, kind: kind, warmup: result.warmup, message: result.message, err: result.err, doctorChecks: result.doctorChecks, doctorHealthy: result.doctorHealthy}:
 			case <-workerCtx.Done():
 			}
 		}()
@@ -354,6 +371,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	}
 
 	startBackupImport := func(path, passphrase string, merge bool) {
+		if warmupRunning {
+			state.showToast("Wait for warm-up to finish", "info")
+			return
+		}
 		if a.demo {
 			demoNotice()
 			return
@@ -381,6 +402,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	}
 
 	performDelete := func(email string) {
+		if warmupRunning {
+			state.showToast("Wait for warm-up to finish", "info")
+			return
+		}
 		invalidateRefresh()
 		fresh, loadErr := a.store.Load(false)
 		if loadErr != nil {
@@ -403,6 +428,10 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	}
 
 	toggleTier := func() {
+		if warmupRunning {
+			state.showToast("Wait for warm-up to finish", "info")
+			return
+		}
 		email, _, ok := state.selectedAccount()
 		if !ok {
 			return
@@ -530,7 +559,21 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		armFrame()
 	}
 
+	beginWarmup := func(email string) {
+		warmupRunning = true
+		invalidateRefresh()
+		startJob("warmup", "Sending one 'hi' with "+warmupModel+" for "+email+"…", func(jobCtx context.Context) tuiJobResult {
+			result, err := a.SendGeminiWarmup(jobCtx, email)
+			return tuiJobResult{warmup: &result, message: result.Message(), err: err}
+		})
+	}
 	performWarmup := func() {
+		if warmupRunning || (state.job != nil && !state.job.Done) {
+			state.showToast("Wait for the current job to finish", "info")
+			a.renderTUI(state, outFile)
+			armFrame()
+			return
+		}
 		email, _, ok := state.selectedAccount()
 		if !ok || email == "" {
 			state.showToast("No account selected to warm up", "error")
@@ -542,17 +585,22 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 			demoNotice()
 			return
 		}
-
-		targetEmail := email
-		startJob("warmup", "Sending 'hi' to Gemini for "+targetEmail+"…", func(jobCtx context.Context) tuiJobResult {
-			if err := a.SendGeminiWarmup(jobCtx, targetEmail); err != nil {
-				return tuiJobResult{err: err}
-			}
-			return tuiJobResult{message: "✓ 5h window started for " + targetEmail}
-		})
+		if refreshing {
+			pendingWarmup = email
+			warmupRunning = true
+			state.showToast("Warm-up queued until quota refresh finishes", "info")
+			a.renderTUI(state, outFile)
+			armFrame()
+			return
+		}
+		beginWarmup(email)
 	}
 
 	submitForm := func() {
+		if warmupRunning {
+			state.showToast("Wait for warm-up to finish", "info")
+			return
+		}
 		if state.form == nil {
 			state.mode = tuiBrowse
 			return
@@ -773,7 +821,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				a.renderTUI(state, outFile)
 			}
 		case <-quotaTicker.C:
-			if !refreshing {
+			if !refreshing && !warmupRunning {
 				state.message, state.messageType = "Background sync…", "info"
 				startRefresh(true)
 			}
@@ -803,7 +851,13 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					state.beginAnimation("success", 360*time.Millisecond)
 				}
 				startActiveResolve()
-				current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
+				if pendingWarmup != "" {
+					email := pendingWarmup
+					pendingWarmup = ""
+					beginWarmup(email)
+				} else {
+					current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
+				}
 				a.renderTUI(state, outFile)
 				armFrame()
 			case tuiActiveEvent:
@@ -841,8 +895,25 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					state.current = current
 					startActiveResolve()
 				}
-				if value.kind == "warmup" && value.err == nil {
-					startRefresh(true)
+				if value.kind == "warmup" {
+					warmupRunning = false
+					if value.warmup != nil {
+						fresh, loadErr := a.store.Load(false)
+						if loadErr == nil {
+							state.updateRecentQuotaChanges(fresh)
+							state.setAccounts(fresh)
+						} else {
+							state.message, state.messageType = "Cannot reload accounts after warm-up: "+loadErr.Error(), "error"
+						}
+						if value.err == nil && !value.warmup.Verified && loadErr == nil {
+							state.messageType = "info"
+							state.beginAnimation("refresh", 360*time.Millisecond)
+						}
+					}
+					if refreshQueued {
+						refreshQueued = false
+						startRefresh(true)
+					}
 				}
 				a.renderTUI(state, outFile)
 				armFrame()

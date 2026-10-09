@@ -45,7 +45,7 @@ Requirements: Go 1.26 or later. macOS source builds require Xcode Command Line T
 ```bash
 git clone https://github.com/aklkbqx/agy-swap.git
 cd agy-swap
-go build -trimpath -ldflags "-s -w -X main.version=3.1.8 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
+go build -trimpath -ldflags "-s -w -X main.version=3.1.9 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
 ./agy-swap version
 ```
 
@@ -113,6 +113,7 @@ Every TUI action is also a command, so you can script it.
 | `next` | Refresh, then switch to the next account with quota left |
 | `status` | Show the active account |
 | `limits` | Show quota for every account |
+| `warmup` | Send one `hi` with Gemini 3.8 Flash (Low) and verify the 5h quota decreases |
 | `profile` / `bind` | Define profiles and bind directories to them |
 | `recommend` | Explain which account is safest to use now |
 | `run now` | Launch the configured CLI with the right account |
@@ -164,6 +165,17 @@ agy-swap limits --refresh --verbose
 agy-swap limit set 1 6h --group claude
 agy-swap limit set dev@company.com reset --group claude
 ```
+
+Warm up a saved account without switching the active session:
+
+```bash
+agy-swap warmup --account dev@company.com
+agy-swap warmup --account dev@company.com --json
+```
+
+In the TUI, press `w` on the selected account. Warm-up sends at most one `hi`, then reads live quota up to three times within 15 seconds. It reports success only when the Gemini 5h remaining fraction decreases; unchanged quota, blocked replies, and verification failures never trigger another prompt. Reset times and percentages always come from Google. The command returns exit code 1 if the decrease cannot be verified. JSON output includes `sent`, `verified`, quota before/after, and the latest saved snapshot.
+
+The model is resolved from the account's Code Assist catalog: `gemini-3.8-flash-low`, or the advertised `gemini-3.8-flash-tiered` with `thinkingLevel: LOW`. No other model version is substituted. JSON records the actual API ID in `wire_model`.
 
 ### Profiles, aliases, and project bindings
 

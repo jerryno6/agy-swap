@@ -22,7 +22,7 @@ All standard workflows are codified in the [`Makefile`](../Makefile):
 make build
 
 # Install binary to ~/.local/bin/agy-swap and verify version
-make install
+make install BUILD_ID=release
 
 # Run unit tests across all packages
 make test
@@ -49,6 +49,16 @@ make qa
 
 ### 3.1 Unit & Regression Tests
 Unit tests are co-located alongside the code they verify. All persistent operations use temporary directories (`t.TempDir()`) or isolated test environments.
+
+### Warm-up verification
+
+Do not add new `*_test.go` files for this project. Run `go test ./...` for existing regressions. Additional warm-up scenarios can use a temporary mock HTTP harness outside the repository, injected with Go's `-overlay` option.
+
+Check direct Low and tiered model selection, missing model/project, token identity mismatch, completed/empty/blocked replies, quota decrease and delayed synchronization, unchanged quota, cancellation, vault failures, store conflicts, and JSON success/failure exit codes. Assert that each invocation issues at most one generation request, active-session credentials remain unchanged, and 5h reset times match the server. A remaining fraction of `0.999` must display as `99%`.
+
+For a live smoke check, record the active account and live quota, send one `hi`, then compare the returned quota and active session. Stop after that generation request even if it fails or quota does not decrease; do not retry as part of the same smoke run.
+
+Validation for 3.1.9: 23 temporary mock scenarios passed, as did existing Go tests and static analysis. The initial live request returned HTTP 404 before catalog-based model resolution and the Antigravity envelope were added. The final wire request has not been verified live; no second prompt was sent.
 
 ### 3.2 Race Detection
 Always verify concurrent operations with the Go race detector:

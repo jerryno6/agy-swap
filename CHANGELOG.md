@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.9
+
+- Warm-up: use Gemini 3.8 Flash (Low), resolving the account's advertised model ID and setting low thinking effort for the tiered model.
+- Warm-up: send at most one `hi`, validate the generation response, and confirm a decrease in live Gemini 5h quota before reporting success; preserve server quota percentages and reset times.
+- Reliability: fail on missing Code Assist projects and token identity mismatches; preserve existing vault credentials when saving refreshed credentials fails.
+- CLI/TUI: share structured warm-up results, provide clean JSON and failure exit codes, serialize warm-up with quota refresh, and reject duplicate jobs and stale snapshots.
+- Release tooling: accept CRLF metadata files when verifying version consistency.
+
 ## 3.1.8
 
 - Settings: configurable auto-next thresholds for 5h window (default 25%) and weekly window (default 15%), renamed to `Auto next interval`.
