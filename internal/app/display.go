@@ -307,6 +307,13 @@ func formatHealthResetDaily(resetAt time.Time, now time.Time) string {
 	return fmt.Sprintf("%2dm", minutes)
 }
 
+// quotaPercent truncates instead of rounding so any consumed quota (one
+// warm-up "hi" costs ~0.0002%) never renders as 100%.
+func quotaPercent(fraction float64, decimals int) float64 {
+	scale := math.Pow(10, float64(decimals))
+	return math.Floor(max(0, min(1, fraction))*100*scale+1e-9) / scale
+}
+
 // extractAccountQuotaPercentages returns the weekly and 5h quota percentages for an account.
 func extractAccountQuotaPercentages(account Account) (weeklyPct, fiveHourPct int, ok bool) {
 	weekly, daily, found := geminiQuotaBuckets(account)
@@ -450,7 +457,7 @@ func accountStatus(account Account, p palette, now time.Time) string {
 		} else if best.fraction <= .3 {
 			color = p.Yellow
 		}
-		status := fmt.Sprintf("[%s] %sReady%s · %s %.2f%% available", tier, color, p.Reset, best.label, best.fraction*100)
+		status := fmt.Sprintf("[%s] %sReady%s · %s %.2f%% available", tier, color, p.Reset, best.label, quotaPercent(best.fraction, 2))
 		if limited := limitedQuotaGroupLabels(groups); len(limited) > 0 {
 			status += " · " + strings.Join(limited, "/") + " limited"
 		}
@@ -536,7 +543,7 @@ func formatQuotaBar(bucket map[string]any, p palette, now time.Time, width int) 
 			reset = " · refresh due"
 		}
 	}
-	return fmt.Sprintf("[%s] %.2f%% remaining%s", bar, fraction*100, reset)
+	return fmt.Sprintf("[%s] %.2f%% remaining%s", bar, quotaPercent(fraction, 2), reset)
 }
 
 // formatQuotaBarResponsive keeps the value and reset window visible when a
@@ -563,7 +570,7 @@ func formatQuotaBarResponsive(bucket map[string]any, p palette, now time.Time, w
 			remaining = "due"
 		}
 	}
-	full := fmt.Sprintf("[%s] %.2f%% remaining", bar, fraction*100)
+	full := fmt.Sprintf("[%s] %.2f%% remaining", bar, quotaPercent(fraction, 2))
 	if remaining != "" {
 		full += " · resets in " + remaining
 	}
@@ -579,16 +586,16 @@ func formatQuotaBarResponsive(bucket map[string]any, p palette, now time.Time, w
 			short = strings.Join(fields[:2], " ")
 		}
 		for _, candidate := range []string{
-			fmt.Sprintf("[%s] %.1f%% · %s", bar, fraction*100, short),
-			fmt.Sprintf("[%s] %.0f%% · %s", bar, fraction*100, short),
-			fmt.Sprintf("[%s] %.0f%% · %s", bar, fraction*100, fields[0]),
+			fmt.Sprintf("[%s] %.1f%% · %s", bar, quotaPercent(fraction, 1), short),
+			fmt.Sprintf("[%s] %.0f%% · %s", bar, quotaPercent(fraction, 0), short),
+			fmt.Sprintf("[%s] %.0f%% · %s", bar, quotaPercent(fraction, 0), fields[0]),
 		} {
 			if visibleWidth(candidate) <= maxWidth {
 				return candidate
 			}
 		}
 	}
-	return fmt.Sprintf("[%s] %.0f%%", bar, fraction*100)
+	return fmt.Sprintf("[%s] %.0f%%", bar, quotaPercent(fraction, 0))
 }
 
 func formatCooldownBar(limit map[string]any, p palette, now time.Time, width int) string {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.12
+
+- Quota display: truncate quota percentages instead of rounding so consumed quota never falsely renders as 100%.
+- Warm-up: format verified 5h quota decrease to 4 decimal places so subtle quota consumption (~0.0002%) from a warmup prompt is visible.
+
 ## 3.1.11
 
 - Fix: on Windows and macOS the OS secure store (Credential Manager / keychain) is now the source of truth for the active account, because that is what agy authenticates from. The OAuth file is only a fallback when the store is empty. Previously a running agy process that refreshed its token into the keyring silently undid a switch while agy-swap kept reporting the file's account.

@@ -908,7 +908,7 @@ func accountHealthCompact(account Account, now time.Time) string {
 
 func accountHealthCompactForGroups(account Account, groups []quotaGroupHealth, now time.Time) string {
 	if best, ok := bestAvailableQuotaGroup(groups); ok {
-		return fmt.Sprintf("%s %.0f%% ready", best.label, best.fraction*100)
+		return fmt.Sprintf("%s %.0f%% ready", best.label, quotaPercent(best.fraction, 0))
 	}
 	if len(groups) > 0 {
 		return "limited"

@@ -32,8 +32,9 @@ func (r WarmupResult) Message() string {
 	if !r.Verified {
 		return "Sent 'hi' to " + r.Account + "; 5h quota decrease not verified"
 	}
-	return fmt.Sprintf("✓ 5h quota decreased for %s: %d%% → %d%%", r.Account,
-		int(math.Floor(r.Before.RemainingFraction*100+1e-9)), int(math.Floor(r.After.RemainingFraction*100+1e-9)))
+	// One "hi" costs ~0.0002% of the 5h bucket, so whole percents hide it.
+	return fmt.Sprintf("✓ 5h quota decreased for %s: %.4f%% → %.4f%%", r.Account,
+		quotaPercent(r.Before.RemainingFraction, 4), quotaPercent(r.After.RemainingFraction, 4))
 }
 
 func warmupFiveHour(snapshot map[string]any) (*WarmupQuota, error) {
