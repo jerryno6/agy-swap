@@ -82,6 +82,9 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	state := newTUIState(accounts, current)
 	state.vault = a.vault
 	state.active = a.activeHint(accounts, current)
+	if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+		state.driftFile = drift.FileEmail
+	}
 	var initialSplitOffset int
 	if initialSettings, err := a.loadSettings(); err == nil {
 		state.settings = initialSettings
@@ -535,7 +538,8 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				switchErr = tokenErr
 				return 1
 			}
-			if a.credentials.Current(ctx) == token {
+			currentSession := a.credentials.Current(ctx)
+			if currentSession == token || strings.EqualFold(extractEmailHint(currentSession), email) {
 				alreadyUsing = true
 			}
 			if a.applyAccount(ctx, token, email) {
@@ -548,12 +552,12 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 			if alreadyUsing {
 				state.showToast("Already using "+email, "info")
 			} else {
-				state.showToast("Switched to "+email, "success")
+				state.showToast("Switched to "+email+tuiAgyProcessSuffix(), "success")
 			}
 		case switchErr != nil:
 			state.showToast("Switch failed: "+switchErr.Error(), "error")
 		default:
-			state.showToast("Could not switch to "+email, "error")
+			state.showToast("Could not switch to "+email+" (secure credential store not updated)", "error")
 		}
 		a.renderTUI(state, outFile)
 		armFrame()
@@ -812,7 +816,16 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					}
 				}
 			}
+			driftFile := ""
+			if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+				driftFile = drift.FileEmail
+			}
+			driftChanged := driftFile != state.driftFile
+			state.driftFile = driftFile
 			newToken := a.credentials.Current(ctx)
+			if newToken == current && driftChanged {
+				a.renderTUI(state, outFile)
+			}
 			if newToken != current {
 				current = newToken
 				state.current = current
@@ -821,6 +834,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				a.renderTUI(state, outFile)
 			}
 		case <-quotaTicker.C:
+			state.autoNextRetried = false
 			if !refreshing && !warmupRunning {
 				state.message, state.messageType = "Background sync…", "info"
 				startRefresh(true)
@@ -857,6 +871,16 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					beginWarmup(email)
 				} else {
 					current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
+					if state.autoNextRetryRequested {
+						// The session changed under us: re-evaluate now against the session
+						// agy really uses instead of waiting a whole interval.
+						state.autoNextRetryRequested = false
+						current = a.credentials.Current(ctx)
+						state.current = current
+						state.active = a.activeHint(state.accounts, current)
+						startActiveResolve()
+						startRefresh(true)
+					}
 				}
 				a.renderTUI(state, outFile)
 				armFrame()
@@ -1406,6 +1430,10 @@ func (a *Application) activeHint(accounts *Accounts, current string) string {
 	if local != "" || current == "" || a.credentials == nil {
 		return local
 	}
+	if a.credentials.secureIsSource() && a.credentials.Secure(context.Background()) != "" {
+		// agy reads the secure store; the mirror file must not name the active account.
+		return ""
+	}
 	candidate := a.credentials.StoredActiveEmail()
 	for _, email := range accounts.Order {
 		if strings.EqualFold(email, candidate) {
@@ -1424,4 +1452,13 @@ func (a *Application) autoNextInterval(settings AppSettings) time.Duration {
 		return time.Duration(settings.UI.AutoNextIntervalSeconds) * time.Second
 	}
 	return tuiAutoRefresh
+}
+
+// tuiAgyProcessSuffix is a short toast suffix for running agy processes
+// (empty off Windows or when none run).
+func tuiAgyProcessSuffix() string {
+	if n := runningAgyProcesses(); n > 0 {
+		return fmt.Sprintf(" · %d running agy process(es) keep their previous account until restarted", n)
+	}
+	return ""
 }

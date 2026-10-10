@@ -916,9 +916,10 @@ func (a *Application) cmdNext(ctx context.Context, args cliArgs) int {
 	if tokenErr == nil && a.credentials.applyUnlocked(ctx, token, getString(next, "email")) {
 		a.recordSwitch(getString(next, "email"))
 		fmt.Fprintf(a.Out, "%s✓ Successfully auto-rotated to %s.%s\n", a.p.Green, getString(next, "email"), a.p.Reset)
+		a.printAgyProcessNote()
 		return 0
 	}
-	fmt.Fprintf(a.Err, "%s✕ Failed to rotate account.%s\n", a.p.Red, a.p.Reset)
+	fmt.Fprintf(a.Err, "%s✕ Failed to rotate account (switch could not be verified in the secure credential store).%s\n", a.p.Red, a.p.Reset)
 	return 1
 }
 
@@ -957,9 +958,10 @@ func (a *Application) cmdSwitch(ctx context.Context, args cliArgs) int {
 	fmt.Fprintf(a.Out, "Switching to %s%s%s %s<%s>%s...\n", a.p.Bold, getString(account, "name"), a.p.Reset, a.p.Gray, email, a.p.Reset)
 	if a.applyAccount(ctx, token, email) {
 		fmt.Fprintf(a.Out, "%s✓ Successfully switched to %s.%s\n", a.p.Green, email, a.p.Reset)
+		a.printAgyProcessNote()
 		return 0
 	}
-	fmt.Fprintf(a.Err, "%s✕ Failed to switch account.%s\n", a.p.Red, a.p.Reset)
+	fmt.Fprintf(a.Err, "%s✕ Failed to switch account (the secure credential store did not end up on %s).%s\n", a.p.Red, email, a.p.Reset)
 	return 1
 }
 
@@ -1079,6 +1081,9 @@ func (a *Application) cmdStatus(ctx context.Context) int {
 		return a.storeError(err)
 	}
 	email := a.activeEmail(ctx, accounts, current)
+	if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+		fmt.Fprintf(a.Err, "%s⚠ %s%s\n", a.p.Yellow, drift.Message(), a.p.Reset)
+	}
 	if account, ok := accounts.Get(email); ok {
 		fmt.Fprintf(a.Out, "Active Account: %s %s● %s%s %s<%s>%s\n", avatar(getString(account, "name"), email, a.color), a.p.Green, getString(account, "name"), a.p.Reset, a.p.Gray, email, a.p.Reset)
 		fmt.Fprintf(a.Out, "Status: %s\n", accountStatus(account, a.p, time.Now()))
@@ -1119,4 +1124,10 @@ func (a *Application) renderTime() time.Time {
 		return a.renderClock()
 	}
 	return time.Now()
+}
+
+func (a *Application) printAgyProcessNote() {
+	if note := agyProcessNote(); note != "" {
+		fmt.Fprintf(a.Out, "%s! %s%s\n", a.p.Yellow, note, a.p.Reset)
+	}
 }

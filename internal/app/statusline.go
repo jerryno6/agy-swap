@@ -116,6 +116,7 @@ func (a *Application) cmdStatusline(ctx context.Context, opts extendedOptions, p
 			return a.extendedError("statusline render", opts, errors.New("statusline input exceeds limit"))
 		}
 		var value any
+		driftNote := ""
 		if strings.TrimSpace(string(data)) != "" {
 			if err := json.Unmarshal(data, &value); err != nil {
 				return a.extendedError("statusline render", opts, fmt.Errorf("invalid statusline JSON: %w", err))
@@ -126,6 +127,9 @@ func (a *Application) cmdStatusline(ctx context.Context, opts extendedOptions, p
 				return a.extendedError("statusline render", opts, err)
 			}
 			active := a.activeEmail(ctx, accounts, a.credentials.Current(ctx))
+			if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+				driftNote = " ⚠ drift(file: " + drift.FileEmail + ")"
+			}
 			if account, ok := accounts.Get(active); ok {
 				remaining, group, reset, known := snapshotMinimum(account)
 				value = map[string]any{"email": active, "remaining_percent": remaining, "group": group, "known": known}
@@ -136,7 +140,7 @@ func (a *Application) cmdStatusline(ctx context.Context, opts extendedOptions, p
 				value = map[string]any{"email": active}
 			}
 		}
-		line := a.statuslineFromInput(value)
+		line := a.statuslineFromInput(value) + driftNote
 		if opts.JSON {
 			return a.extendedResult("statusline render", opts, map[string]string{"text": line}, nil)
 		}

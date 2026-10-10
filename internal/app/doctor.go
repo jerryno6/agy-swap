@@ -64,6 +64,9 @@ func (a *Application) cmdDoctor(ctx context.Context, opts extendedOptions) int {
 	default:
 		add("active_session", "ok", "OAuth credential detected")
 	}
+	if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+		add("session_drift", "error", drift.Message())
+	}
 	if runtime.GOOS == "windows" {
 		add("platform", "ok", runtime.GOOS+"/"+runtime.GOARCH+" uses Credential Manager and PowerShell installer")
 	} else {

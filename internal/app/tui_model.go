@@ -93,6 +93,13 @@ type tuiState struct {
 	quotaErrors    map[string]string
 	refreshing     bool
 	resolvingToken string
+	// driftFile is the identity in the agy-swap session file when it differs
+	// from the secure store identity agy really uses; empty when in sync.
+	driftFile string
+	// autoNextRetried/autoNextRetryRequested bound the immediate re-evaluation
+	// after an external session change to one per quota tick.
+	autoNextRetried        bool
+	autoNextRetryRequested bool
 	width          int
 	height         int
 	motionEnabled  bool

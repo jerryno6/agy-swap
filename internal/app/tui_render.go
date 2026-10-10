@@ -289,6 +289,9 @@ func (a *Application) tuiActiveLine(state *tuiState, width int) string {
 		}
 	}
 	content := a.p.Orange + "⬢ " + a.p.Bold + a.p.White + "ACTIVE" + a.p.Reset + "  " + a.p.Green + "●" + a.p.Reset + " " + avatar(name, state.active, a.color) + " " + a.p.White + a.p.Bold + tuiText(name) + a.p.Reset + " " + a.p.Gray + "<" + tuiText(state.active) + ">" + a.p.Reset + "  " + "[" + status + "]"
+	if state.driftFile != "" {
+		content += "  " + a.p.Yellow + "⚠ drift: session file says " + tuiText(state.driftFile) + a.p.Reset
+	}
 	return frameRow(content, g, a.p)
 }
 

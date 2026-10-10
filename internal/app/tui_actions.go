@@ -213,6 +213,9 @@ func (a *Application) tuiDoctorSnapshot(ctx context.Context, refresh bool) ([]do
 	default:
 		add("active_session", "ok", "OAuth credential detected")
 	}
+	if drift := a.credentials.SessionDrift(ctx); drift.Drift {
+		add("session_drift", "error", drift.Message())
+	}
 	if runtime.GOOS == "windows" {
 		add("platform", "ok", runtime.GOOS+"/"+runtime.GOARCH+" uses Credential Manager")
 	} else {
@@ -342,7 +345,11 @@ func (a *Application) handleAutoNext(
 		return current
 	}
 	// Session identity changed since refresh started: protect manual/external switch
-	if event.sessionToken == "" || event.sessionToken != current {
+	if event.sessionToken == "" {
+		return current
+	}
+	if event.sessionToken != current {
+		a.requestAutoNextRetry(state, current)
 		return current
 	}
 	// Do not act on cached old failures, store/storage error
@@ -361,7 +368,7 @@ func (a *Application) handleAutoNext(
 	if activeEmail == "" {
 		activeEmail = a.activeHint(event.accounts, current)
 	}
-	if activeEmail == "" && a.credentials != nil {
+	if activeEmail == "" && a.credentials != nil && !(a.credentials.secureIsSource() && a.credentials.Secure(ctx) != "") {
 		activeEmail = a.credentials.StoredActiveEmail()
 	}
 	if activeEmail == "" {
@@ -426,16 +433,11 @@ func (a *Application) handleAutoNext(
 
 		// Recheck exact identity under SessionLock before applying, protecting concurrent/external switches
 		nowSession := a.credentials.Current(ctx)
-		if nowSession != event.sessionToken || nowSession != current {
+		if nowSession != event.sessionToken || nowSession != current ||
+			a.credentials.Secure(ctx) != event.secureToken ||
+			a.credentials.OAuthToken() != event.oauthToken {
 			_ = lock.Close()
-			return current
-		}
-		if a.credentials.Secure(ctx) != event.secureToken {
-			_ = lock.Close()
-			return current
-		}
-		if a.credentials.OAuthToken() != event.oauthToken {
-			_ = lock.Close()
+			a.requestAutoNextRetry(state, nowSession)
 			return current
 		}
 
@@ -460,7 +462,7 @@ func (a *Application) handleAutoNext(
 		state.selectedEmail = candidateEmail
 		state.resolvingToken = ""
 		state.clampSelection()
-		state.showToast("Auto-switched to "+candidateEmail, "success")
+		state.showToast("Auto-switched to "+candidateEmail+tuiAgyProcessSuffix(), "success")
 		state.beginAnimation("success", 360*time.Millisecond)
 		return current
 	}
@@ -482,4 +484,19 @@ func findAccountCaseInsensitive(accounts *Accounts, email string) Account {
 		}
 	}
 	return nil
+}
+
+// requestAutoNextRetry reports an external session change instead of silently
+// skipping auto-next, and asks the event loop for one immediate re-evaluation
+// per quota tick.
+func (a *Application) requestAutoNextRetry(state *tuiState, session string) {
+	who := extractEmailHint(session)
+	if who == "" {
+		who = "unknown account"
+	}
+	state.showToast("Session changed externally ("+who+"); re-evaluating", "info")
+	if !state.autoNextRetried {
+		state.autoNextRetried = true
+		state.autoNextRetryRequested = true
+	}
 }

@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
+	"strings"
 )
 
 type CredentialBackend interface {
@@ -64,11 +66,89 @@ func (c *Credentials) OAuthToken() string {
 	return c.readOAuthToken()
 }
 
+// secureIsSource reports whether the OS secure store is what agy actually
+// authenticates from (Windows Credential Manager, macOS keychain). There the
+// OAuth files are only a mirror that agy-swap writes; a running agy process can
+// overwrite the secure store without touching them.
+func (c *Credentials) secureIsSource() bool {
+	if c == nil || c.backend == nil {
+		return false
+	}
+	if _, ok := c.backend.(sessionPreparer); ok {
+		return true
+	}
+	if auth, ok := c.backend.(authoritativeSecureStore); ok && auth.AuthoritativeSecure() {
+		return true
+	}
+	return false
+}
+
+// Current returns the session agy will use. When the secure store is
+// authoritative it wins and the OAuth file is only a fallback for an empty
+// store. Elsewhere the file is preferred, as before.
 func (c *Credentials) Current(ctx context.Context) string {
+	if c.secureIsSource() {
+		if token := c.Secure(ctx); token != "" {
+			return token
+		}
+		return c.OAuthToken()
+	}
 	if token := c.OAuthToken(); token != "" {
 		return token
 	}
 	return c.Secure(ctx)
+}
+
+// SessionDrift describes the identity in the secure store (what agy uses)
+// against the identity in the agy-swap mirror files.
+type SessionDrift struct {
+	SecureEmail string
+	FileEmail   string
+	Drift       bool
+}
+
+// SessionDrift reports whether the secure store and the OAuth file disagree.
+// Drift is only reported when the secure store is authoritative and both
+// identities are known; email hints are read from either token format.
+func (c *Credentials) SessionDrift(ctx context.Context) SessionDrift {
+	if c == nil {
+		return SessionDrift{}
+	}
+	result := SessionDrift{
+		SecureEmail: extractEmailHint(c.Secure(ctx)),
+		FileEmail:   extractEmailHint(c.OAuthToken()),
+	}
+	if result.FileEmail == "" {
+		result.FileEmail = c.StoredActiveEmail()
+	}
+	result.Drift = c.secureIsSource() && result.SecureEmail != "" && result.FileEmail != "" && !strings.EqualFold(result.SecureEmail, result.FileEmail)
+	return result
+}
+
+// Message is the user-facing description of a drifted session.
+func (d SessionDrift) Message() string {
+	return fmt.Sprintf("session drift: agy will use %s but the agy-swap session file says %s (a running agy process likely refreshed its token into the keyring)", d.SecureEmail, d.FileEmail)
+}
+
+// verifyActive confirms that the secure store holds the account just applied.
+// It is a no-op where the secure store is not authoritative.
+func (c *Credentials) verifyActive(ctx context.Context, tokenData, email string) bool {
+	if !c.secureIsSource() {
+		return true
+	}
+	secure := c.Secure(ctx)
+	if secure == "" {
+		return false
+	}
+	if hint := extractEmailHint(secure); hint != "" {
+		return strings.EqualFold(hint, email)
+	}
+	if preparer, ok := c.backend.(sessionPreparer); ok {
+		if prepared, err := preparer.PrepareSession(tokenData); err == nil {
+			return secure == prepared
+		}
+	}
+	return secure == tokenData
 }
 
 // StoredActiveEmail returns the last identity written by the Antigravity
@@ -173,7 +253,16 @@ func containsString(values []any, target string) bool {
 	return false
 }
 
+// applyUnlocked applies the account and then reads the secure store back to
+// confirm agy will really use it; a mismatch is reported as failure.
 func (c *Credentials) applyUnlocked(ctx context.Context, tokenData, email string) bool {
+	if !c.applyUnlockedRaw(ctx, tokenData, email) {
+		return false
+	}
+	return c.verifyActive(ctx, tokenData, normalizeEmail(email))
+}
+
+func (c *Credentials) applyUnlockedRaw(ctx context.Context, tokenData, email string) bool {
 	if decodeToken(tokenData) == nil {
 		return false
 	}
@@ -267,4 +356,15 @@ func (c *Credentials) Clear(ctx context.Context) bool {
 	}
 	defer func() { _ = lock.Close() }()
 	return c.clearUnlocked(ctx)
+}
+
+// agyProcessNote warns that already-running agy processes keep their previous
+// account and may overwrite the keyring when they refresh their token. It
+// returns "" when nothing applies (always on non-Windows platforms).
+func agyProcessNote() string {
+	n := runningAgyProcesses()
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d running agy process(es) keep their previous account until restarted and may overwrite the keyring when they refresh their token.", n)
 }

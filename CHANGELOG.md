@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.11
+
+- Fix: on Windows and macOS the OS secure store (Credential Manager / keychain) is now the source of truth for the active account, because that is what agy authenticates from. The OAuth file is only a fallback when the store is empty. Previously a running agy process that refreshed its token into the keyring silently undid a switch while agy-swap kept reporting the file's account.
+- Add session-drift detection: `status`, the TUI active line, `statusline` and `doctor` warn when the secure store and the agy-swap session file name different accounts.
+- Switches (`switch`, `next`, TUI switch, auto-next, `run now`) read the secure store back and fail honestly, without recording history, if it does not hold the target account.
+- Auto-next: an external session change during a refresh now shows a toast and triggers one immediate re-evaluation instead of silently skipping the interval.
+- Windows: after a successful switch, warn that running agy processes keep their previous account until restarted and may overwrite the keyring.
+
 ## 3.1.10
 
 - TUI: add aligned account index column '#' after 'S' in account table matching 'agy-swap switch <index>'.
