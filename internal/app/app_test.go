@@ -261,7 +261,7 @@ func TestAccountAvailabilityKeepsFamiliesIndependent(t *testing.T) {
 	reset := now.Add(3 * time.Hour)
 	account := quotaAccount("user@example.com", 0.9584, 0, reset)
 	p := makePalette(false)
-	wantReady := " 95%  3h -  95%  3h"
+	wantReady := " 95% 3h 0m -  95% 3h 0m"
 	if got := accountHealthCompact(account, now); got != wantReady {
 		t.Fatalf("compact health = %q, want %q", got, wantReady)
 	}
@@ -271,7 +271,7 @@ func TestAccountAvailabilityKeepsFamiliesIndependent(t *testing.T) {
 	}
 
 	allLimited := quotaAccount("limited@example.com", 0, 0, reset)
-	wantLimited := "  0%  3h -   0%  3h"
+	wantLimited := "  0% 3h 0m -   0% 3h 0m"
 	if got := accountHealthCompact(allLimited, now); got != wantLimited {
 		t.Fatalf("all-limited compact health = %q, want %q", got, wantLimited)
 	}
@@ -471,7 +471,7 @@ func TestTUIQuotaListDropsEmailBeforeHealthAtNarrowWidth(t *testing.T) {
 	state := newTUIState(accounts, "user@example.com")
 	state.view = tuiViewQuota
 
-	expectedHealth := " 85%  2d -  85% 50h"
+	expectedHealth := " 85% 2d 2h -  85% 50h 0m"
 	narrow := a.tuiQuotaViewRows(state, 36, 12)
 	if want := "● Alpha Tester  " + expectedHealth; narrow[0] != want {
 		t.Fatalf("narrow row = %q, want %q", narrow[0], want)

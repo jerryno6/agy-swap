@@ -265,46 +265,53 @@ func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found
 
 func formatHealthResetWeekly(resetAt time.Time, now time.Time) string {
 	if resetAt.IsZero() {
-		return " --"
+		return "   --"
 	}
 	remaining := resetAt.Sub(now)
 	if remaining <= 0 {
-		return " 0m"
+		return "   0m"
 	}
 	remaining = remaining.Round(time.Minute)
 	if remaining <= 0 {
-		return " 0m"
+		return "   0m"
 	}
 	if remaining >= 24*time.Hour {
 		days := int(remaining / (24 * time.Hour))
-		return fmt.Sprintf("%2dd", days)
+		hours := int((remaining % (24 * time.Hour)) / time.Hour)
+		return fmt.Sprintf("%dd%2dh", days, hours)
+	}
+	if remaining >= 10*time.Hour {
+		hours := int(remaining / time.Hour)
+		return fmt.Sprintf("0d%2dh", hours)
 	}
 	if remaining >= time.Hour {
 		hours := int(remaining / time.Hour)
-		return fmt.Sprintf("%2dh", hours)
+		minutes := int((remaining % time.Hour) / time.Minute)
+		return fmt.Sprintf("%dh%2dm", hours, minutes)
 	}
 	minutes := int(remaining / time.Minute)
-	return fmt.Sprintf("%2dm", minutes)
+	return fmt.Sprintf("  %2dm", minutes)
 }
 
 func formatHealthResetDaily(resetAt time.Time, now time.Time) string {
 	if resetAt.IsZero() {
-		return " --"
+		return "   --"
 	}
 	remaining := resetAt.Sub(now)
 	if remaining <= 0 {
-		return " 0m"
+		return "   0m"
 	}
 	remaining = remaining.Round(time.Minute)
 	if remaining <= 0 {
-		return " 0m"
+		return "   0m"
 	}
 	if remaining >= time.Hour {
 		hours := int(remaining / time.Hour)
-		return fmt.Sprintf("%2dh", hours)
+		minutes := int((remaining % time.Hour) / time.Minute)
+		return fmt.Sprintf("%dh%2dm", hours, minutes)
 	}
 	minutes := int(remaining / time.Minute)
-	return fmt.Sprintf("%2dm", minutes)
+	return fmt.Sprintf("  %2dm", minutes)
 }
 
 // quotaPercent truncates instead of rounding so any consumed quota (one
@@ -341,7 +348,7 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 	}
 
 	weeklyPct := "  --"
-	weeklyResetStr := " --"
+	weeklyResetStr := "   --"
 	if weekly.found {
 		weeklyRemain := int(math.Floor(max(0, min(1, weekly.fraction))*100 + 1e-9))
 		weeklyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", weeklyRemain))
@@ -349,7 +356,7 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 	}
 
 	dailyPct := "  --"
-	dailyResetStr := " --"
+	dailyResetStr := "   --"
 	if daily.found {
 		dailyRemain := int(math.Floor(max(0, min(1, daily.fraction))*100 + 1e-9))
 		dailyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", dailyRemain))

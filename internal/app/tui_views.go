@@ -641,7 +641,7 @@ func (a *Application) beginTUIForm(state *tuiState, kind string) {
 			{Key: "policy.min_remaining_pct", Label: "Min %", Value: strconv.Itoa(settings.Policy.MinRemainingPct)},
 			{Key: "policy.allow_apply", Label: "Auto apply", Value: onOff(settings.Policy.AllowApply), Options: []string{"off", "on"}},
 			{Key: "ui.auto_next", Label: "Auto next", Value: onOff(settings.UI.AutoNext), Options: []string{"off", "on"}},
-			{Key: "ui.auto_next_interval_seconds", Label: "Auto next interval", Value: strconv.Itoa(settings.UI.AutoNextIntervalSeconds)},
+			{Key: "ui.auto_next_interval_seconds", Label: "Auto refresh and Auto next interval", Value: strconv.Itoa(settings.UI.AutoNextIntervalSeconds)},
 			{Key: "ui.auto_next_weekly_threshold", Label: "Auto next weekly threshold %", Value: strconv.Itoa(settings.UI.AutoNextWeeklyThreshold), Help: "Switch when weekly quota drops below this % (default 15)."},
 			{Key: "ui.auto_next_5h_threshold", Label: "Auto next 5h threshold %", Value: strconv.Itoa(settings.UI.AutoNext5hThreshold), Help: "Switch when 5h quota drops below this % (default 25)."},
 			{Key: "notifications.enabled", Label: "Notify", Value: onOff(settings.Notifications.Enabled), Options: []string{"off", "on"}},

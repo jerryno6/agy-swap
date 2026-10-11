@@ -84,7 +84,7 @@ func newTUIGeometry(innerWidth, height int) tuiGeometry {
 	if g.layout == tuiLayoutWide {
 		// Give the account table enough room for identity and health columns,
 		// while keeping the selected account details dominant on large screens.
-		g.leftWidth = maxInt(48, minInt(68, (frameWidth-7)*46/100))
+		g.leftWidth = maxInt(50, minInt(68, (frameWidth-7)*46/100))
 		g.rightWidth = maxInt(1, frameWidth-7-g.leftWidth)
 	}
 	return g
@@ -423,7 +423,7 @@ func (a *Application) tuiWideBody(state *tuiState, width, height int) []string {
 	g := newTUIGeometry(width, height+8)
 	g.bodyRows = maxInt(1, height)
 	totalAvail := maxInt(2, g.frameWidth-7)
-	baseLeft := maxInt(48, minInt(68, totalAvail*46/100))
+	baseLeft := maxInt(50, minInt(68, totalAvail*46/100))
 	offset := 0
 	if state != nil {
 		offset = state.splitOffset
@@ -794,8 +794,8 @@ func tuiAccountColumnWidths(width int) (marker, identity, health int) {
 	width = maxInt(16, width)
 	marker = 4 // [AA]
 	health = maxInt(14, minInt(32, width/3))
-	if width >= 48 && health < 19 {
-		health = 19
+	if width >= 48 && health < 23 {
+		health = 23
 	}
 	identity = width - marker - health - 11 // four marker/index columns (S, #, A, R) plus six spaces
 	if identity < 12 {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.13
+
+- TUI: display more detailed remaining reset times in `HEALTH` column (`days + hours` for Weekly, e.g., `4d10h`; `hours + minutes` for 5h window, e.g., `2h59m`) with aligned column width.
+- TUI Settings: rename `Auto next interval` label to `Auto refresh and Auto next interval`.
+
 ## 3.1.12
 
 - Quota display: truncate quota percentages instead of rounding so consumed quota never falsely renders as 100%.
