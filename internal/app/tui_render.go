@@ -30,6 +30,7 @@ type tuiAccountView struct {
 	selected        bool
 	active          bool
 	recentChanged   bool
+	priority        int
 	health          string
 	tone            tuiHealthTone
 	needsAttention  bool
@@ -348,9 +349,9 @@ func (a *Application) tuiAccountView(state *tuiState, email string, now time.Tim
 	name := firstString(tuiText(getString(account, "name")), "Google User")
 	health, tone := accountGeminiHealth(account, now)
 	view := tuiAccountView{
-		email:    email,
-		name:     name,
-		avatar:   avatar(name, email, a.color),
+		email:         email,
+		name:          name,
+		avatar:        avatar(name, email, a.color),
 		selected:      strings.EqualFold(email, state.selectedEmail),
 		active:        strings.EqualFold(email, state.active),
 		recentChanged: state != nil && state.recentChangedAccounts[email],
@@ -410,8 +411,32 @@ func (a *Application) tuiIndexMarker(idx int) string {
 	return a.p.Gray + fmt.Sprintf("%2d", idx) + a.p.Reset
 }
 
+func tuiAutoNextRanks(state *tuiState, now time.Time) map[string]int {
+	if state == nil || !state.settingsLoaded || state.active == "" ||
+		findAccountCaseInsensitive(state.accounts, state.active) == nil ||
+		hasQuotaError(state.quotaErrors, "store") || hasQuotaError(state.quotaErrors, "storage") {
+		return nil
+	}
+	candidates := rankAutoNextCandidates(state.accounts, state.active, state.settings, state.quotaErrors, now, AutoNextCandidateOptions{})
+	ranks := make(map[string]int, len(candidates))
+	for index, candidate := range candidates {
+		ranks[candidate.email] = index + 1
+	}
+	return ranks
+}
+
+func (a *Application) tuiPriorityMarker(rank int) string {
+	if rank == 1 {
+		return a.p.Bold + a.p.Cyan + "1*" + a.p.Reset
+	}
+	if rank > 1 {
+		return a.p.Gray + fmt.Sprint(rank) + a.p.Reset
+	}
+	return a.p.DarkGray + "--" + a.p.Reset
+}
+
 func (a *Application) tuiAccountIdentityLine(view tuiAccountView, state *tuiState) string {
-	return fmt.Sprintf("%s %s %s %s %s %s", a.tuiSelectionMarker(view, state), a.tuiActiveMarker(view), a.tuiRecentMarker(view), view.avatar, a.tuiIdentity(view.name), a.tuiSecondary("<"+view.email+">"))
+	return fmt.Sprintf("%s %s %s P%s %s %s %s", a.tuiSelectionMarker(view, state), a.tuiActiveMarker(view), a.tuiRecentMarker(view), a.tuiPriorityMarker(view.priority), view.avatar, a.tuiIdentity(view.name), a.tuiSecondary("<"+view.email+">"))
 }
 
 func (a *Application) renderAccountRow(view tuiAccountView, width int) string {
@@ -556,6 +581,8 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 	}
 	ready, attention := state.partitionedEmails()
 	now := a.renderTime()
+	ranks := tuiAutoNextRanks(state, now)
+	state.priorityRanks = ranks
 	if len(attention) == 0 {
 		if maxRows > 1 {
 			maxRows -= maxRows % 2
@@ -573,6 +600,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 		for i := start; i < end; i++ {
 			email := emails[i]
 			view := a.tuiAccountView(state, email, now)
+			view.priority = ranks[email]
 			label := a.tuiAccountIdentityLine(view, state)
 			if maxRows == 1 {
 				rows = append(rows, fitVisible(label, width, a.p))
@@ -594,6 +622,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 		blocks = append(blocks, stackedBlock{isHeader: true, lines: []string{a.tuiSectionDividerRow("READY", len(ready), false, width)}})
 		for _, email := range ready {
 			view := a.tuiAccountView(state, email, now)
+			view.priority = ranks[email]
 			label := a.tuiAccountIdentityLine(view, state)
 			summary := "  " + a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			blocks = append(blocks, stackedBlock{email: email, lines: []string{fitVisible(label, width, a.p), fitVisible(summary, width, a.p)}})
@@ -603,6 +632,7 @@ func (a *Application) tuiAccountRows(state *tuiState, width, maxRows int) []stri
 		blocks = append(blocks, stackedBlock{isHeader: true, lines: []string{a.tuiSectionDividerRow("ATTENTION REQUIRED", len(attention), true, width)}})
 		for _, email := range attention {
 			view := a.tuiAccountView(state, email, now)
+			view.priority = ranks[email]
 			label := a.tuiAccountIdentityLine(view, state)
 			summary := "  " + a.tuiHealthColor(view.tone) + view.health + a.p.Reset
 			blocks = append(blocks, stackedBlock{email: email, lines: []string{fitVisible(label, width, a.p), fitVisible(summary, width, a.p)}})
@@ -657,12 +687,17 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 	if maxRows <= 0 {
 		return nil
 	}
-	markerWidth, identityWidth, healthWidth := tuiAccountColumnWidths(width)
+	priorityWidth := 2
+	if state.accounts != nil {
+		priorityWidth = maxInt(priorityWidth, len(fmt.Sprint(state.accounts.Len())))
+	}
+	markerWidth, identityWidth, healthWidth := tuiAccountColumnWidths(width - priorityWidth - 1)
 	columns := []string{
 		fitVisible("S", 1, a.p),
 		fitVisible(" #", 2, a.p),
 		fitVisible("A", 1, a.p),
 		fitVisible("R", 1, a.p),
+		fitVisible("P", priorityWidth, a.p),
 		fitVisible("TAG", markerWidth, a.p),
 		fitVisible("ACCOUNT", identityWidth, a.p),
 		fitVisible("HEALTH", healthWidth, a.p),
@@ -685,6 +720,9 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 	}
 
 	ready, attention := state.partitionedEmails()
+	now := a.renderTime()
+	ranks := tuiAutoNextRanks(state, now)
+	state.priorityRanks = ranks
 	// Grouped lists open with a section divider, which already separates the
 	// header from the body. Drawing the header rule too stacks two rules.
 	if len(attention) == 0 {
@@ -696,7 +734,6 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 			start = maxInt(0, minInt(selectedIndex-rowBudget/2, len(emails)-rowBudget))
 		}
 		end := minInt(len(emails), start+rowBudget)
-		now := a.renderTime()
 		for _, email := range emails[start:end] {
 			view := a.tuiAccountView(state, email, now)
 			identity := a.tuiIdentity(view.name)
@@ -707,6 +744,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 				fitVisible(a.tuiIndexMarker(idx), 2, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
 				fitVisible(a.tuiRecentMarker(view), 1, a.p),
+				fitVisible(a.tuiPriorityMarker(ranks[email]), priorityWidth, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
 				fitVisible(identity, identityWidth, a.p),
 				fitVisible(health, healthWidth, a.p),
@@ -750,7 +788,6 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 		start = maxInt(0, minInt(selectedItemIdx-rowBudget/2, len(items)-rowBudget))
 	}
 	end := minInt(len(items), start+rowBudget)
-	now := a.renderTime()
 	for _, it := range items[start:end] {
 		if it.isHeader {
 			rows = append(rows, a.tuiSectionDividerRow(it.headerTitle, it.headerCount, it.isAttention, width))
@@ -764,6 +801,7 @@ func (a *Application) tuiAccountTableRows(state *tuiState, width, maxRows int) [
 				fitVisible(a.tuiIndexMarker(idx), 2, a.p),
 				fitVisible(a.tuiActiveMarker(view), 1, a.p),
 				fitVisible(a.tuiRecentMarker(view), 1, a.p),
+				fitVisible(a.tuiPriorityMarker(ranks[it.email]), priorityWidth, a.p),
 				fitVisible(view.avatar, markerWidth, a.p),
 				fitVisible(identity, identityWidth, a.p),
 				fitVisible(health, healthWidth, a.p),
@@ -1069,6 +1107,8 @@ func (a *Application) tuiHelpLines(width int) []string {
 	lines := []string{
 		"KEYBOARD GUIDE",
 		"",
+		"P column    Auto-next priority",
+		"1*          Next candidate; -- active / unavailable",
 		"↑ ↓ / j k   Move through accounts",
 		"[ ] / + -   Resize accounts split (drag or = resets)",
 		"Enter       Switch selected account",

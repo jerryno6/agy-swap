@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.15
+
+- Auto-next: convert weekly budget above its reserve to 5h units using the observed estimate of 20% weekly per full 5h bucket, pairing only windows in the same model group. Ample weekly quota no longer reduces equivalent 5h capacity or reset bonuses; add formula regressions for the reported account #6/#7 pair, insufficient weekly budget, configured reserves and unpaired windows.
+- TUI: add Auto-next priority column `P` with cyan `1*` for the first candidate, numeric fallback ranks, and `--` for active/unavailable accounts. Compact layouts show `P1*`/`P2`; preserve account order and global ranks during search. Share ranking with auto-next, including the 90–100% quota band, and show the preview even when auto-next is OFF.
+- Auto-next: treat 90–100% remaining quota as equal ranking capacity and maximum reset-bonus headroom, so earlier 5h resets win when weekly resets match. Keep actual-quota eligibility, capacity penalties below 90%, and configured reserve thresholds at/above 90%.
+- Tests: cover high-quota equivalence, one-minute reset advantages, both quota windows, fractional precision below 90%, and real eligibility with high configured thresholds.
+
+## 3.1.14
+
+- Auto-next: default/sticky and balanced policies rank healthy accounts by remaining quota and upcoming weekly/5h resets, preferring quota that can be used before reset. Bounded bonuses shrink near configured switching thresholds; missing, invalid and elapsed resets never imply a refill.
+- Auto-next: preserve explicit round-robin and profile reserve priority, use circular rotation to break smart-score ties, and keep fractional quota precision.
+- Tests: add selector regressions for weekly/5h reset priorities, ten accounts, threshold headroom, malformed data, model families, profiles, eligibility and fallback.
+
 ## 3.1.13
 
 - TUI: display more detailed remaining reset times in `HEALTH` column (`days + hours` for Weekly, e.g., `4d10h`; `hours + minutes` for 5h window, e.g., `2h59m`) with aligned column width.

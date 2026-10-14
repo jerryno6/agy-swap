@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -831,6 +832,13 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				state.current = current
 				state.active = a.activeHint(state.accounts, current)
 				startActiveResolve()
+				a.renderTUI(state, outFile)
+			}
+			// Keep the preview current after settings changes and snapshot expiry,
+			// even when the animation timer is idle and no quota refresh is due.
+			ranks := tuiAutoNextRanks(state, a.renderTime())
+			if !maps.Equal(state.priorityRanks, ranks) {
+				state.priorityRanks = ranks
 				a.renderTUI(state, outFile)
 			}
 		case <-quotaTicker.C:

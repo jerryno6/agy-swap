@@ -16,6 +16,17 @@ const (
 
 	// AutoNextMaxQuotaAge is the maximum allowed age of a quota snapshot before it is considered stale.
 	AutoNextMaxQuotaAge = 15 * time.Minute
+
+	// Bounded reset bonuses favor expiring quota without overpowering capacity.
+	autoNextWeeklyResetBonus = 30.0
+	autoNext5hResetBonus     = 20.0
+
+	// High quotas offer comparable capacity for this workload: favor their resets.
+	autoNextFullQuotaFraction = 0.90
+
+	// Workload estimate: a full 5h bucket consumes about 20% of weekly quota.
+	// Only pair windows within the same model group.
+	autoNextWeeklyPer5hFraction = 0.20
 )
 
 // autoNextThresholdLimits returns threshold fractions (0.0 - 1.0) configured in settings.
@@ -265,16 +276,107 @@ func autoNextAccountRemaining(account Account, family string) (float64, bool) {
 	return minFraction * 100, true
 }
 
+// autoNextCandidateScore balances current capacity against upcoming resets.
+// For groups with both windows, weekly capacity above its reserve is converted
+// to 5h units before applying the limiting capacity and headroom. Ample weekly
+// quota cannot penalize an otherwise equivalent 5h window just for being lower.
+// Unpaired windows retain their native capacity. Each window uses the least
+// favorable reset across matching buckets; missing or elapsed resets add nothing.
+// Capacity and headroom saturate at 90% of the reference window. Thresholds at
+// or above 90% retain headroom up to 100% for safe boundaries.
+// This is a ranking heuristic, not a prediction of the task's consumption rate.
+func autoNextCandidateScore(account Account, family string, weeklyLimit, fiveHourLimit float64, now time.Time) float64 {
+	capacity := 1.0
+	headroom := 1.0
+	weeklyProximity, fiveHourProximity := 1.0, 1.0
+	hasWeekly, hasFiveHour := false, false
+	for _, rawGroup := range getSlice(getMap(account["quota_snapshot"])["groups"]) {
+		group := getMap(rawGroup)
+		if !quotaFamilyMatches(strings.ToLower(cleanText(getString(group, "id"))), family) {
+			continue
+		}
+		groupWeekly, groupFiveHour := 1.0, 1.0
+		groupHasWeekly, groupHasFiveHour := false, false
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			window := strings.ToLower(strings.TrimSpace(getString(bucket, "window")))
+			fraction, ok := getFloat(bucket["remaining_fraction"])
+			if !ok || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {
+				continue
+			}
+			var duration time.Duration
+			switch window {
+			case "weekly":
+				duration = 7 * 24 * time.Hour
+				groupWeekly = min(groupWeekly, fraction)
+				groupHasWeekly = true
+			case "5h":
+				duration = 5 * time.Hour
+				groupFiveHour = min(groupFiveHour, fraction)
+				groupHasFiveHour = true
+			default:
+				continue
+			}
+			proximity := 0.0
+			if reset, err := parseUTC(getString(bucket, "reset_at")); err == nil && reset.After(now) {
+				proximity = max(0, 1-float64(reset.Sub(now))/float64(duration))
+			}
+			if window == "weekly" {
+				hasWeekly = true
+				weeklyProximity = min(weeklyProximity, proximity)
+			} else {
+				hasFiveHour = true
+				fiveHourProximity = min(fiveHourProximity, proximity)
+			}
+		}
+		if !groupHasWeekly && !groupHasFiveHour {
+			continue
+		}
+		groupCapacity, reserve := groupWeekly, weeklyLimit
+		spendable := max(0, groupWeekly-weeklyLimit)
+		if groupHasFiveHour {
+			groupCapacity, reserve = groupFiveHour, fiveHourLimit
+			spendable = max(0, groupFiveHour-fiveHourLimit)
+			if groupHasWeekly {
+				weeklyBudget := max(0, groupWeekly-weeklyLimit) / autoNextWeeklyPer5hFraction
+				spendable = min(spendable, weeklyBudget)
+				groupCapacity = min(groupCapacity, reserve+spendable)
+			}
+		}
+		capacity = min(capacity, groupCapacity)
+		fullQuota := autoNextFullQuotaFraction
+		if reserve >= fullQuota {
+			fullQuota = 1
+		}
+		usable := 0.0
+		if reserve < fullQuota {
+			usable = min(1, spendable/(fullQuota-reserve))
+		}
+		headroom = min(headroom, usable)
+	}
+	if !hasWeekly && !hasFiveHour {
+		return 0
+	}
+	if !hasWeekly {
+		weeklyProximity = 0
+	}
+	if !hasFiveHour {
+		fiveHourProximity = 0
+	}
+	return min(capacity, autoNextFullQuotaFraction)*100 + headroom*(autoNextWeeklyResetBonus*weeklyProximity+autoNext5hResetBonus*fiveHourProximity)
+}
+
 // SelectAutoNextCandidate selects the best eligible candidate account to auto-switch to.
 //
 // Candidate selection rules:
-//   - Existing next policy: if policy is "sticky", it is treated as "round-robin".
+//   - Sticky/balanced/default rank by quota headroom and upcoming weekly/5h resets.
+//   - Explicit round-robin preserves circular rotation; score ties also use that order.
 //   - Preserves configured minRemaining and family eligibility.
 //   - Excludes active account.
 //   - Excludes accounts with refresh errors or auth errors.
 //   - Excludes accounts in cooldown.
-//   - Excludes accounts with stale (>2m) or future snapshots.
-//   - Excludes accounts below either threshold (5h < 0.20 OR weekly < 0.15).
+//   - Excludes accounts with stale (>15m) or future snapshots.
+//   - Excludes accounts below either configured threshold (defaults: 5h < 25%, weekly < 15%).
 //   - Zero credential or network IO on the UI thread.
 //   - Returns (account, true) if an eligible candidate is found; (nil, false) otherwise (no loops).
 func SelectAutoNextCandidate(
@@ -296,8 +398,33 @@ func SelectAutoNextCandidateWithOptions(
 	now time.Time,
 	opts AutoNextCandidateOptions,
 ) (Account, bool) {
-	if accounts == nil || accounts.Len() == 0 {
+	candidates := rankAutoNextCandidates(accounts, activeEmail, settings, quotaErrors, now, opts)
+	if len(candidates) == 0 {
 		return nil, false
+	}
+	return candidates[0].account, true
+}
+
+type autoNextCandidate struct {
+	account   Account
+	email     string
+	score     float64
+	rotation  int
+	isReserve bool
+}
+
+// rankAutoNextCandidates is the shared, IO-free ranking for rotation and UI
+// preview. It ranks the full account set independently of the UI search filter.
+func rankAutoNextCandidates(
+	accounts *Accounts,
+	activeEmail string,
+	settings AppSettings,
+	quotaErrors map[string]string,
+	now time.Time,
+	opts AutoNextCandidateOptions,
+) []autoNextCandidate {
+	if accounts == nil || accounts.Len() == 0 {
+		return nil
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -319,11 +446,6 @@ func SelectAutoNextCandidateWithOptions(
 	if family == "" {
 		family = settings.Policy.PreferFamily
 	}
-	// Rotation advance: sticky becomes round-robin
-	if policy == "sticky" {
-		policy = "round-robin"
-	}
-
 	activeIndex := -1
 	for i, email := range accounts.Order {
 		if activeEmail != "" && strings.EqualFold(email, activeEmail) {
@@ -332,14 +454,8 @@ func SelectAutoNextCandidateWithOptions(
 		}
 	}
 
-	type candidateItem struct {
-		account   Account
-		email     string
-		score     int
-		isReserve bool
-	}
-
-	var candidates []candidateItem
+	weeklyLimit, fiveHourLimit := autoNextThresholdLimits(settings)
+	var candidates []autoNextCandidate
 	for index, email := range accounts.Order {
 		// Exclude active
 		if activeEmail != "" && strings.EqualFold(email, activeEmail) {
@@ -371,7 +487,6 @@ func SelectAutoNextCandidateWithOptions(
 		}
 		// Require evaluated result.Valid == true and !triggered using configured thresholds.
 		// Rejects candidate accounts with invalid-only fractions (1.5, NaN, Inf) or unknown-window snapshots.
-		weeklyLimit, fiveHourLimit := autoNextThresholdLimits(settings)
 		triggered, threshRes := CheckAutoNextThresholdWithLimits(account, now, weeklyLimit, fiveHourLimit)
 		if !threshRes.Valid || triggered {
 			continue
@@ -391,12 +506,10 @@ func SelectAutoNextCandidateWithOptions(
 			continue
 		}
 
-		score := int(remaining)
-		switch policy {
-		case "round-robin":
-			score = accounts.Len() - (index-activeIndex-1+accounts.Len())%accounts.Len()
-		case "balanced":
-			score = int(remaining)
+		rotation := accounts.Len() - (index-activeIndex-1+accounts.Len())%accounts.Len()
+		score := autoNextCandidateScore(account, family, weeklyLimit, fiveHourLimit, now)
+		if policy == "round-robin" {
+			score = float64(rotation)
 		}
 
 		isReserve := false
@@ -404,16 +517,13 @@ func SelectAutoNextCandidateWithOptions(
 			isReserve = true
 		}
 
-		candidates = append(candidates, candidateItem{
+		candidates = append(candidates, autoNextCandidate{
 			account:   account,
 			email:     email,
 			score:     score,
+			rotation:  rotation,
 			isReserve: isReserve,
 		})
-	}
-
-	if len(candidates) == 0 {
-		return nil, false
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -422,10 +532,13 @@ func SelectAutoNextCandidateWithOptions(
 				return !candidates[i].isReserve
 			}
 		}
-		return candidates[i].score > candidates[j].score
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].rotation > candidates[j].rotation
 	})
 
-	return candidates[0].account, true
+	return candidates
 }
 
 // SelectAutoNextCandidateEmail returns the email of the selected candidate account, if any.

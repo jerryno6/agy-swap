@@ -100,24 +100,26 @@ type tuiState struct {
 	// after an external session change to one per quota tick.
 	autoNextRetried        bool
 	autoNextRetryRequested bool
-	width          int
-	height         int
-	motionEnabled  bool
-	animation      tuiAnimation
-	job            *tuiJobState
-	settings       AppSettings
-	settingsLoaded bool
-	splitOffset    int
-	profileNames   []string
-	profileIndex   int
-	history        []historyEvent
-	historyIndex   int
-	doctorChecks   []doctorCheck
-	doctorHealthy  bool
-	backupPath            string
-	quitRequested         bool
-	vault                 AccountVault
-	recentChangedAccounts map[string]bool
+	width                  int
+	height                 int
+	motionEnabled          bool
+	animation              tuiAnimation
+	job                    *tuiJobState
+	settings               AppSettings
+	settingsLoaded         bool
+	splitOffset            int
+	profileNames           []string
+	profileIndex           int
+	history                []historyEvent
+	historyIndex           int
+	doctorChecks           []doctorCheck
+	doctorHealthy          bool
+	backupPath             string
+	quitRequested          bool
+	vault                  AccountVault
+	recentChangedAccounts  map[string]bool
+	// Last rendered priority preview, used to detect changes while idle.
+	priorityRanks map[string]int
 }
 
 func newTUIState(accounts *Accounts, current string) *tuiState {
