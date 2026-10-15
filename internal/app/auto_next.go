@@ -8,6 +8,9 @@ import (
 )
 
 const (
+	// Account selection and auto-next thresholds always evaluate Gemini quota.
+	selectionQuotaFamily = "gemini"
+
 	// AutoNext5hThreshold is the strict upper bound for the 5-hour rolling quota window (25%).
 	AutoNext5hThreshold = 0.25
 
@@ -64,7 +67,7 @@ func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThres
 // configured auto-next thresholds.
 //
 // Rules:
-//   - Min over ALL matching buckets across all quota groups.
+//   - Min over matching buckets in Gemini quota groups only.
 //   - Strict OR condition: (has5h && min5h < fiveHourThreshold) || (hasWeekly && minWeekly < weeklyThreshold).
 //   - Equality does NOT trigger.
 //   - Missing windows are NOT treated as zero and cannot trigger.
@@ -111,7 +114,7 @@ func CheckAutoNextThresholdWithLimits(account Account, now time.Time, weeklyThre
 
 	for _, rawGroup := range groups {
 		group := getMap(rawGroup)
-		if group == nil {
+		if group == nil || !quotaFamilyMatches(strings.ToLower(cleanText(getString(group, "id"))), selectionQuotaFamily) {
 			continue
 		}
 		buckets := getSlice(group["buckets"])
@@ -216,7 +219,7 @@ func hasQuotaError(quotaErrors map[string]string, email string) bool {
 // AutoNextCandidateOptions specifies optional filters for candidate selection.
 type AutoNextCandidateOptions struct {
 	Profile        string
-	Family         string
+	Family         string // Retained for compatibility; auto-next always uses Gemini.
 	Tag            string
 	ExcludedEmails []string
 }
@@ -224,7 +227,7 @@ type AutoNextCandidateOptions struct {
 // autoNextAccountRemaining calculates the limiting remaining percentage (0-100)
 // considering only finite, in-range [0.0, 1.0] fractions in known quota windows ("5h" and "weekly").
 // Any malformed fractions (NaN, Inf, < 0, > 1) or non-5h/weekly windows are ignored and not clamped.
-func autoNextAccountRemaining(account Account, family string) (float64, bool) {
+func autoNextAccountRemaining(account Account) (float64, bool) {
 	if account == nil {
 		return 0, false
 	}
@@ -246,7 +249,7 @@ func autoNextAccountRemaining(account Account, family string) (float64, bool) {
 			continue
 		}
 		groupId := strings.ToLower(cleanText(getString(group, "id")))
-		if !quotaFamilyMatches(groupId, family) {
+		if !quotaFamilyMatches(groupId, selectionQuotaFamily) {
 			continue
 		}
 		buckets := getSlice(group["buckets"])
@@ -277,22 +280,22 @@ func autoNextAccountRemaining(account Account, family string) (float64, bool) {
 }
 
 // autoNextCandidateScore balances current capacity against upcoming resets.
-// For groups with both windows, weekly capacity above its reserve is converted
-// to 5h units before applying the limiting capacity and headroom. Ample weekly
+// For groups with both windows, actual weekly capacity is converted to 5h units.
+// Switching thresholds determine eligibility, not a withheld weekly budget. Ample weekly
 // quota cannot penalize an otherwise equivalent 5h window just for being lower.
 // Unpaired windows retain their native capacity. Each window uses the least
 // favorable reset across matching buckets; missing or elapsed resets add nothing.
 // Capacity and headroom saturate at 90% of the reference window. Thresholds at
 // or above 90% retain headroom up to 100% for safe boundaries.
 // This is a ranking heuristic, not a prediction of the task's consumption rate.
-func autoNextCandidateScore(account Account, family string, weeklyLimit, fiveHourLimit float64, now time.Time) float64 {
+func autoNextCandidateScore(account Account, weeklyLimit, fiveHourLimit float64, now time.Time) float64 {
 	capacity := 1.0
 	headroom := 1.0
 	weeklyProximity, fiveHourProximity := 1.0, 1.0
 	hasWeekly, hasFiveHour := false, false
 	for _, rawGroup := range getSlice(getMap(account["quota_snapshot"])["groups"]) {
 		group := getMap(rawGroup)
-		if !quotaFamilyMatches(strings.ToLower(cleanText(getString(group, "id"))), family) {
+		if !quotaFamilyMatches(strings.ToLower(cleanText(getString(group, "id"))), selectionQuotaFamily) {
 			continue
 		}
 		groupWeekly, groupFiveHour := 1.0, 1.0
@@ -338,9 +341,9 @@ func autoNextCandidateScore(account Account, family string, weeklyLimit, fiveHou
 			groupCapacity, reserve = groupFiveHour, fiveHourLimit
 			spendable = max(0, groupFiveHour-fiveHourLimit)
 			if groupHasWeekly {
-				weeklyBudget := max(0, groupWeekly-weeklyLimit) / autoNextWeeklyPer5hFraction
-				spendable = min(spendable, weeklyBudget)
-				groupCapacity = min(groupCapacity, reserve+spendable)
+				weeklyBudget := groupWeekly / autoNextWeeklyPer5hFraction
+				groupCapacity = min(groupCapacity, weeklyBudget)
+				spendable = max(0, groupCapacity-reserve)
 			}
 		}
 		capacity = min(capacity, groupCapacity)
@@ -371,7 +374,7 @@ func autoNextCandidateScore(account Account, family string, weeklyLimit, fiveHou
 // Candidate selection rules:
 //   - Sticky/balanced/default rank by quota headroom and upcoming weekly/5h resets.
 //   - Explicit round-robin preserves circular rotation; score ties also use that order.
-//   - Preserves configured minRemaining and family eligibility.
+//   - Preserves configured minRemaining and requires Gemini quota.
 //   - Excludes active account.
 //   - Excludes accounts with refresh errors or auth errors.
 //   - Excludes accounts in cooldown.
@@ -434,17 +437,10 @@ func rankAutoNextCandidates(
 
 	policy := settings.Policy.Name
 	profile, hasProfile := settings.Profiles[opts.Profile]
-	family := opts.Family
 	if hasProfile {
-		if family == "" {
-			family = profile.Family
-		}
 		if profile.Policy != "" {
 			policy = profile.Policy
 		}
-	}
-	if family == "" {
-		family = settings.Policy.PreferFamily
 	}
 	activeIndex := -1
 	for i, email := range accounts.Order {
@@ -493,7 +489,7 @@ func rankAutoNextCandidates(
 		}
 		// Preserving configured minRemaining / family eligibility using finite in-range usable known-window quota.
 		// Malformed fractions and non-5h/weekly windows are ignored and never clamped.
-		remaining, known := autoNextAccountRemaining(account, family)
+		remaining, known := autoNextAccountRemaining(account)
 		if !known || remaining <= 0 {
 			continue
 		}
@@ -501,13 +497,13 @@ func rankAutoNextCandidates(
 			continue
 		}
 		// Exclude cooldown
-		wait, waitKnown := accountCooldown(account, now, family)
+		wait, waitKnown := accountCooldown(account, now, selectionQuotaFamily)
 		if waitKnown && wait > 0 {
 			continue
 		}
 
 		rotation := accounts.Len() - (index-activeIndex-1+accounts.Len())%accounts.Len()
-		score := autoNextCandidateScore(account, family, weeklyLimit, fiveHourLimit, now)
+		score := autoNextCandidateScore(account, weeklyLimit, fiveHourLimit, now)
 		if policy == "round-robin" {
 			score = float64(rotation)
 		}

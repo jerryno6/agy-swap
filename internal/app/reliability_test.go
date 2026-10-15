@@ -48,8 +48,13 @@ func TestRecommendationEligibilityAndPolicies(t *testing.T) {
 	a := &Application{}
 	settings := defaultSettings()
 	choices := a.buildRecommendations(context.Background(), accounts, settings, "", "", "")
-	if choices[0].Email != "b@example.com" || !choices[0].Ready || choices[1].Ready {
+	if choices[0].Email != "a@example.com" || !choices[0].Ready || choices[0].Family != "gemini" {
 		t.Fatalf("ineligible account ranked first: %#v", choices)
+	}
+	settings.Policy.PreferFamily = "claude"
+	choices = a.buildRecommendations(context.Background(), accounts, settings, "", "gpt", "")
+	if choices[0].Email != "a@example.com" || !choices[0].Ready || choices[0].Family != "gemini" {
+		t.Fatalf("family preference overrode Gemini selection: %#v", choices)
 	}
 	accounts.ByEmail["b@example.com"]["quota_limits"] = map[string]any{"manual:gemini": map[string]any{"family": "gemini", "source": "manual", "reset_at": isoTime(reset), "observed_at": isoTime(time.Now())}}
 	if wait, _ := accountCooldown(accounts.ByEmail["b@example.com"], time.Now(), "gemini"); wait <= 0 {
@@ -57,6 +62,7 @@ func TestRecommendationEligibilityAndPolicies(t *testing.T) {
 	}
 	delete(accounts.ByEmail["b@example.com"], "quota_limits")
 	settings.Profiles["work"] = Profile{Account: "a@example.com", Policy: "sticky", ReserveAccounts: []string{"b@example.com"}}
+	accounts.ByEmail["a@example.com"] = quotaAccount("a@example.com", 0, 1, reset)
 	choices = a.buildRecommendations(context.Background(), accounts, settings, "work", "", "")
 	if choices[0].Email != "b@example.com" {
 		t.Fatal("reserve not selected when primary depleted")

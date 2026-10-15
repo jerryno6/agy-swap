@@ -34,7 +34,7 @@ func TestAutoNextResetPriorities(t *testing.T) {
 		{"5h_1h_before_5h", 1, 1, 1, 1, 5 * 24 * time.Hour, 5 * time.Hour, 5 * 24 * time.Hour, time.Hour, "second"},
 		{"weekly_priority_over_5h_bonus", 1, 1, 1, 1, 5 * 24 * time.Hour, time.Hour, 3 * time.Hour, 5 * time.Hour, "second"},
 		{"both_resets_before_only_weekly", 1, 1, 1, 1, 3 * time.Hour, 5 * time.Hour, 3 * time.Hour, time.Hour, "second"},
-		{"healthy_before_near_depleted_weekly", .16, 1, 1, 1, time.Minute, time.Minute, 5 * 24 * time.Hour, 5 * time.Hour, "second"},
+		{"use_expiring_weekly_with_80_percent_session_capacity", .16, 1, 1, 1, time.Minute, time.Minute, 5 * 24 * time.Hour, 5 * time.Hour, "first"},
 		{"healthy_before_near_depleted_5h", 1, .26, 1, 1, time.Minute, time.Minute, 5 * 24 * time.Hour, 5 * time.Hour, "second"},
 		{"quota_priority_when_resets_match", .8, .8, 1, 1, time.Hour, time.Hour, time.Hour, time.Hour, "second"},
 		{"fractional_quota_precision_below_full_band", .8001, .8001, .8009, .8009, 7 * 24 * time.Hour, 5 * time.Hour, 7 * 24 * time.Hour, 5 * time.Hour, "second"},
@@ -61,13 +61,35 @@ func TestAutoNextResetPriorities(t *testing.T) {
 func TestAutoNextTenAccounts(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	accounts := NewAccounts()
-	for _, email := range []string{"active", "b", "c", "d", "e", "f", "g", "h", "i", "near-reset"} {
-		accounts.Set(email, autoNextQuotaAccount(email, now, 1, 1, 5*24*time.Hour, 5*time.Hour))
+	// Reported ten-account Gemini snapshot, with Trang Linh active.
+	for _, item := range []struct {
+		email                      string
+		weekly, fiveHour           float64
+		weeklyReset, fiveHourReset time.Duration
+	}{
+		{"momizy-gaming", .2109, 1, 30*time.Hour + 23*time.Minute, 4*time.Hour + 58*time.Minute},
+		{"le-dang-vu", 1, 1, 166*time.Hour + 6*time.Minute, 4*time.Hour + 58*time.Minute},
+		{"trang-linh", .6050, 1, 99*time.Hour + 50*time.Minute, 4*time.Hour + 58*time.Minute},
+		{"lan-nguyen", .2680, 1, 75*time.Hour + 43*time.Minute, 4*time.Hour + 22*time.Minute},
+		{"david-martin", .2161, 1, 33*time.Hour + 47*time.Minute, 4*time.Hour + 58*time.Minute},
+		{"vu-dang22", .5890, .2042, 126*time.Hour + 32*time.Minute, 2*time.Hour + 28*time.Minute},
+		{"vu-le21", .4011, .2120, 78*time.Hour + 33*time.Minute, 3*time.Hour + 3*time.Minute},
+		{"vu-le20", .9596, .8685, 157*time.Hour + 22*time.Minute, 4*time.Hour + 11*time.Minute},
+		{"vu-le14", 0, 1, 9*time.Hour + 23*time.Minute, 4*time.Hour + 58*time.Minute},
+		{"momizy-playing", 1, 1, 167*time.Hour + 58*time.Minute, 4*time.Hour + 58*time.Minute},
+	} {
+		accounts.Set(item.email, autoNextQuotaAccount(item.email, now, item.weekly, item.fiveHour, item.weeklyReset, item.fiveHourReset))
 	}
-	getMap(autoNextTestBuckets(accounts.ByEmail["near-reset"])[0])["reset_at"] = isoTime(now.Add(3 * time.Hour))
-	got, ok := SelectAutoNextCandidateEmail(accounts, "active", defaultSettings(), nil, now)
-	if !ok || got != "near-reset" {
-		t.Fatalf("selected %q (%v), want near-reset", got, ok)
+	settings := defaultSettings()
+	settings.UI.AutoNextWeeklyThreshold, settings.UI.AutoNext5hThreshold = 15, 40
+	got, ok := SelectAutoNextCandidateEmail(accounts, "trang-linh", settings, nil, now)
+	if !ok || got != "momizy-gaming" {
+		t.Fatalf("selected %q (%v), want momizy-gaming", got, ok)
+	}
+	state := &tuiState{accounts: accounts, active: "trang-linh", settings: settings, settingsLoaded: true}
+	ranks := tuiAutoNextRanks(state, now)
+	if ranks[got] != 1 || ranks["david-martin"] != 2 || ranks["lan-nguyen"] != 3 {
+		t.Fatalf("TUI priority does not match expiry ranking: %#v", ranks)
 	}
 }
 
@@ -109,7 +131,9 @@ func TestAutoNextCandidateSafety(t *testing.T) {
 			s.Tags["second"] = []string{"work"}
 			o.Tag = "work"
 		}},
-		{"missing_family", func(_ Account, _ *AppSettings, _ map[string]string, o *AutoNextCandidateOptions) { o.Family = "claude" }},
+		{"missing_gemini", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			getMap(getSlice(getMap(a["quota_snapshot"])["groups"])[0])["id"] = "third_party"
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,12 +145,6 @@ func TestAutoNextCandidateSafety(t *testing.T) {
 			opts := AutoNextCandidateOptions{}
 			tc.mutate(accounts.ByEmail["first"], &settings, errors, &opts)
 			got, ok := SelectAutoNextCandidateWithOptions(accounts, "active", settings, errors, now, opts)
-			if tc.name == "missing_family" {
-				if ok {
-					t.Fatal("selected account without requested family")
-				}
-				return
-			}
 			if !ok || getString(got, "email") != "second" {
 				t.Fatalf("selected %q (%v), want second", getString(got, "email"), ok)
 			}
@@ -204,12 +222,23 @@ func TestAutoNextFamilyAndGroupResetAggregation(t *testing.T) {
 	accounts.Set("first", first)
 	accounts.Set("second", autoNextQuotaAccount("second", now, 1, 1, 3*time.Hour, time.Hour))
 	settings := defaultSettings()
-	for _, tc := range []struct{ family, want string }{{"", "second"}, {"gemini", "first"}, {"claude", "first"}, {"gpt", "first"}} {
+	settings.Policy.PreferFamily = "claude"
+	for _, tc := range []struct{ family, want string }{{"", "first"}, {"gemini", "first"}, {"claude", "first"}, {"gpt", "first"}} {
 		got, ok := SelectAutoNextCandidateWithOptions(accounts, "active", settings, nil, now, AutoNextCandidateOptions{Family: tc.family})
 		if !ok || getString(got, "email") != tc.want {
 			t.Fatalf("family %q selected %q (%v), want %s", tc.family, getString(got, "email"), ok, tc.want)
 		}
 	}
+	// Exhausted third-party quota must not trigger rotation or reject Gemini.
+	thirdPartyBucket := getMap(getSlice(thirdParty["buckets"])[0])
+	thirdPartyBucket["remaining_fraction"] = 0.0
+	if triggered, result := CheckAutoNextThreshold(first, now); triggered || !result.Valid {
+		t.Fatalf("third-party quota affected Gemini trigger: %+v", result)
+	}
+	if got, ok := SelectAutoNextCandidateEmail(accounts, "active", settings, nil, now); !ok || got != "first" {
+		t.Fatalf("exhausted third-party quota selected %q (%v), want first", got, ok)
+	}
+	thirdPartyBucket["remaining_fraction"] = 1.0
 	// A duplicate bucket with a later reset must also limit the bonus.
 	group := getMap(getSlice(snapshot["groups"])[0])
 	group["buckets"] = append(getSlice(group["buckets"]), getSlice(thirdParty["buckets"])[0])
@@ -389,9 +418,9 @@ func TestAutoNextWeeklyBudgetRespectsReservesAndWindowPairs(t *testing.T) {
 		want                                             string
 	}{
 		{"ample_weekly_budget_prefers_earlier_reset", .45, 1, .8, 1, 15, "near"},
-		{"barely_above_weekly_reserve", .16, 1, .8, 1, 15, "far"},
-		{"insufficient_weekly_budget_despite_full_5h", .20, 1, .8, 1, 15, "far"},
-		{"configured_weekly_reserve_limits_budget", .85, 1, .99, 1, 80, "far"},
+		{"weekly_threshold_does_not_withhold_capacity", .16, 1, .8, 1, 15, "near"},
+		{"20_percent_weekly_supports_full_5h", .20, 1, .8, 1, 15, "near"},
+		{"configured_weekly_threshold_only_filters_eligibility", .85, 1, .99, 1, 80, "near"},
 		{"5h_still_limits_low_capacity", .8, .26, .8, 1, 15, "far"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,7 +450,7 @@ func TestAutoNextWeeklyBudgetRespectsReservesAndWindowPairs(t *testing.T) {
 	if !ok || got != "high" {
 		t.Fatalf("weekly-only ranking selected %q (%v), want high", got, ok)
 	}
-	// Unpaired weekly quota in another family cannot be converted using Gemini's 5h bucket.
+	// Other families cannot reduce Gemini capacity or reset bonuses.
 	first := accounts.ByEmail["high"]
 	first["quota_snapshot"] = autoNextQuotaAccount("high", now, .6, 1, time.Hour, time.Hour)["quota_snapshot"]
 	snapshot := getMap(first["quota_snapshot"])
@@ -430,7 +459,7 @@ func TestAutoNextWeeklyBudgetRespectsReservesAndWindowPairs(t *testing.T) {
 	}})
 	accounts.ByEmail["low"] = autoNextQuotaAccount("low", now, 1, 1, 4*24*time.Hour, 4*time.Hour)
 	got, ok = SelectAutoNextCandidateEmail(accounts, "active", defaultSettings(), nil, now)
-	if !ok || got != "low" {
-		t.Fatalf("unpaired-family budget selected %q (%v), want low", got, ok)
+	if !ok || got != "high" {
+		t.Fatalf("Gemini-only budget selected %q (%v), want high", got, ok)
 	}
 }

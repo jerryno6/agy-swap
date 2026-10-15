@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.16
+
+- Auto-next: compute Gemini session capacity from actual weekly quota without subtracting the weekly switching threshold. A 21% weekly balance supports a full 5h session, allowing Momizy Gaming to rank ahead of Lan Nguyen because its weekly reset is earlier; verify the reported ten-account snapshot against both selection and the TUI P column.
+- Account selection: use Gemini quota exclusively for auto-next thresholds, candidate eligibility, cooldowns, reset scoring and the shared TUI P ranking. Claude/GPT quota no longer affects account rotation.
+- Recommendations: use Gemini for `next`, `recommend` and profile recommendations regardless of family flags or preferences; preserve existing policies and configured thresholds.
+
 ## 3.1.15
 
 - Auto-next: convert weekly budget above its reserve to 5h units using the observed estimate of 20% weekly per full 5h bucket, pairing only windows in the same model group. Ample weekly quota no longer reduces equivalent 5h capacity or reset bonuses; add formula regressions for the reported account #6/#7 pair, insufficient weekly budget, configured reserves and unpaired windows.

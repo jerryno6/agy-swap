@@ -1040,18 +1040,14 @@ func (a *Application) buildRecommendations(ctx context.Context, accounts *Accoun
 }
 
 func rankRecommendations(accounts *Accounts, settings AppSettings, active, profileName, family, tag string, now time.Time) []recommendation {
+	// Selection ignores other families even when requested by flags or profiles.
+	family = selectionQuotaFamily
 	policy := settings.Policy.Name
 	profile, hasProfile := settings.Profiles[profileName]
 	if hasProfile {
-		if family == "" {
-			family = profile.Family
-		}
 		if profile.Policy != "" {
 			policy = profile.Policy
 		}
-	}
-	if family == "" {
-		family = settings.Policy.PreferFamily
 	}
 	result := make([]recommendation, 0, accounts.Len())
 	if now.IsZero() {
