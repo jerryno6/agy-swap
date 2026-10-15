@@ -363,6 +363,9 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 		dailyResetStr = formatHealthResetDaily(daily.resetAt, now)
 	}
 
+	if warmupQuotaPending(account, now) {
+		dailyPct, dailyResetStr = "sync", "pending"
+	}
 	health := fmt.Sprintf("%s %s - %s %s", weeklyPct, weeklyResetStr, dailyPct, dailyResetStr)
 
 	minFraction := 1.0

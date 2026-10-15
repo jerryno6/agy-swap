@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.17
+
+- Warm-up: after automatic or manual TUI refresh, send one 'hi' to P=1/P=2 accounts with full Gemini 5h quota; persist guards to prevent duplicate requests.
+- TUI: reload live quota after each warm-up account, refresh again after completion, and show a syncing state while quota updates are pending.
+
 ## 3.1.16
 
 - Auto-next: compute Gemini session capacity from actual weekly quota without subtracting the weekly switching threshold. A 21% weekly balance supports a full 5h session, allowing Momizy Gaming to rank ahead of Lan Nguyen because its weekly reset is earlier; verify the reported ten-account snapshot against both selection and the TUI P column.

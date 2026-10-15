@@ -889,7 +889,12 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 			bucket := getMap(rawBucket)
 			valueWidth := maxInt(8, width-labelWidth-3)
 			barWidth := tuiQuotaBarWidth(valueWidth)
-			rows = append(rows, tuiDetailKV(tuiText(getString(bucket, "name")), formatQuotaBarResponsive(bucket, a.p, now, barWidth, valueWidth), width, labelWidth, a.p))
+			value := formatQuotaBarResponsive(bucket, a.p, now, barWidth, valueWidth)
+			if getString(group, "id") == selectionQuotaFamily &&
+				getString(bucket, "window") == "5h" && warmupQuotaPending(account, now) {
+				value = "Syncing after warm-up"
+			}
+			rows = append(rows, tuiDetailKV(tuiText(getString(bucket, "name")), value, width, labelWidth, a.p))
 		}
 	}
 	if len(quotaGroups(account)) == 0 {
@@ -945,6 +950,9 @@ func accountHealthCompact(account Account, now time.Time) string {
 }
 
 func accountHealthCompactForGroups(account Account, groups []quotaGroupHealth, now time.Time) string {
+	if warmupQuotaPending(account, now) {
+		return "5h syncing"
+	}
 	if best, ok := bestAvailableQuotaGroup(groups); ok {
 		return fmt.Sprintf("%s %.0f%% ready", best.label, quotaPercent(best.fraction, 0))
 	}

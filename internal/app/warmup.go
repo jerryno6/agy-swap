@@ -29,6 +29,9 @@ type WarmupResult struct {
 }
 
 func (r WarmupResult) Message() string {
+	if !r.Sent {
+		return "No 'hi' sent to " + r.Account
+	}
 	if !r.Verified {
 		return "Sent 'hi' to " + r.Account + "; 5h quota decrease not verified"
 	}
@@ -135,6 +138,10 @@ func validateWarmupResponse(result map[string]any) error {
 }
 
 func (a *Application) SendGeminiWarmup(ctx context.Context, email string) (WarmupResult, error) {
+	return a.sendGeminiWarmup(ctx, email, false)
+}
+
+func (a *Application) sendGeminiWarmup(ctx context.Context, email string, automatic bool) (WarmupResult, error) {
 	result := WarmupResult{Account: email, Model: warmupModel}
 	if !a.warmupMu.TryLock() {
 		return result, errors.New("warm-up is already running")
@@ -147,6 +154,9 @@ func (a *Application) SendGeminiWarmup(ctx context.Context, email string) (Warmu
 	account, ok := accounts.ByEmail[email]
 	if !ok {
 		return result, fmt.Errorf("account %s not found", email)
+	}
+	if automatic && !autoWarmupReady(account, time.Now().UTC()) {
+		return result, nil
 	}
 	token, err := a.accountToken(ctx, account)
 	if err != nil {
@@ -195,11 +205,27 @@ func (a *Application) SendGeminiWarmup(ctx context.Context, email string) (Warmu
 	}
 	result.Snapshot = snapshot
 	result.Before, _ = warmupFiveHour(snapshot)
+	if automatic && !fullGeminiFiveHour(snapshot) {
+		return result, nil
+	}
 	latestToken, err := a.accountToken(ctx, account)
 	if err != nil {
 		return result, err
 	}
 	access = getString(tokenObject(decodeToken(latestToken)), "access_token")
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	// Persist before sending: an uncertain delivery or delayed quota update must
+	// not cause another automatic prompt, including after an app restart.
+	notBefore := time.Now().UTC().Add(5*time.Hour + time.Second)
+	if reset, err := parseUTC(result.Before.ResetAt); err == nil && reset.After(notBefore) {
+		notBefore = reset
+	}
+	account["warmup_not_before"] = isoTime(notBefore)
+	if err := a.store.Save(accounts); err != nil {
+		return result, fmt.Errorf("reserve warm-up window: %w", err)
+	}
 	// Generation must never replay after redirects or the optional TLS fallback.
 	single := &HTTPService{client: a.http.client, insecure: a.http.insecure, errOut: a.http.errOut, cloudAPI: a.http.cloudAPI, singleAttempt: true}
 	response, err := single.cloudPost(ctx, access, "generateContent", map[string]any{
@@ -218,6 +244,12 @@ func (a *Application) SendGeminiWarmup(ctx context.Context, email string) (Warmu
 		return result, err
 	}
 	result.Sent = true
+	// Keep stale 100% out of the TUI while Google's quota is propagating.
+	// This is display metadata only; selection still uses the server snapshot.
+	account["warmup_quota_pending_until"] = isoTime(time.Now().UTC().Add(5 * time.Hour))
+	if err := a.store.Save(accounts); err != nil {
+		return result, fmt.Errorf("sent 'hi', but cannot save pending quota state: %w", err)
+	}
 	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	for attempt := 0; attempt < 3; attempt++ {

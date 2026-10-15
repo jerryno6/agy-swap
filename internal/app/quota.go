@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -102,10 +103,15 @@ func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]a
 			window := getString(bucket, "window")
 			fraction, ok := getFloat(bucket["remainingFraction"])
 			reset := getString(bucket, "resetTime")
-			if !oneOf(window, "weekly", "5h") || !ok || reset == "" {
+			if !oneOf(window, "weekly", "5h") {
 				continue
 			}
-			fraction = max(0, min(1, fraction))
+			if !ok || reset == "" {
+				return nil, fmt.Errorf("Google returned an invalid quota bucket")
+			}
+			if math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {
+				return nil, fmt.Errorf("Google returned an invalid quota fraction")
+			}
 			buckets = append(buckets, map[string]any{"id": id, "name": cleanText(firstString(bucket["displayName"], window)), "window": window, "remaining_fraction": fraction, "reset_at": reset})
 		}
 		if groupID != "" && len(buckets) > 0 {
