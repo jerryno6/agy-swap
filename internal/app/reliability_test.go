@@ -120,6 +120,7 @@ func TestRefreshedOAuthCredentialPersistsOnQuotaFailure(t *testing.T) {
 	h := NewHTTPService(&bytes.Buffer{})
 	h.oauthURL = server.URL + "/oauth"
 	h.cloudAPI = server.URL + "/"
+	h.quotaAPI = server.URL + "/"
 	q := NewQuotaService(h, s)
 	q.SetVault(fakeAccountVault{})
 	failures := q.Refresh(context.Background(), accounts, true, nil)

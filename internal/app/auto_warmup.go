@@ -13,6 +13,9 @@ func fullGeminiFiveHour(snapshot map[string]any) bool {
 		}
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
+			if quotaBucketDisabled(bucket) {
+				continue
+			}
 			if getString(bucket, "window") != "5h" {
 				continue
 			}

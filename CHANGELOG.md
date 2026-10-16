@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.18
+
+- Quota: read Gemini weekly and five-hour limits from the production quota endpoint; refresh legacy catalog and third-party-only caches.
+- TUI: restore weekly/5h HEALTH, keep A/R/P behavior, and prioritize Gemini 3.8 High quota in account details.
+- Parsing: preserve provider-disabled windows and exclude them from quota thresholds, priority scoring and warm-up.
+
 ## 3.1.17
 
 - Warm-up: after automatic or manual TUI refresh, send one 'hi' to P=1/P=2 accounts with full Gemini 5h quota; persist guards to prevent duplicate requests.

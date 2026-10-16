@@ -42,6 +42,9 @@ func (r WarmupResult) Message() string {
 
 func warmupFiveHour(snapshot map[string]any) (*WarmupQuota, error) {
 	_, fiveHour, _ := geminiQuotaBuckets(Account{"quota_snapshot": snapshot})
+	if fiveHour.disabled {
+		return nil, errors.New("Gemini 5h quota is disabled by the server; warm-up is unavailable")
+	}
 	if !fiveHour.found || fiveHour.resetAt.IsZero() || math.IsNaN(fiveHour.fraction) || math.IsInf(fiveHour.fraction, 0) {
 		return nil, errors.New("Google returned no valid Gemini 5h quota")
 	}

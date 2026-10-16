@@ -683,7 +683,7 @@ func (a *Application) cmdList(ctx context.Context, args cliArgs) int {
 		hasLimits = hasLimits || len(activeLimits(account, now)) > 0
 	}
 	if hasQuota {
-		fmt.Fprintf(a.Out, "%sQuota comes from Google; grouped models share weekly and optional 5-hour limits.%s\n", a.p.Gray, a.p.Reset)
+		fmt.Fprintf(a.Out, "%sQuota comes from Google; weekly/5h windows use the production quota summary.%s\n", a.p.Gray, a.p.Reset)
 	} else if hasLimits {
 		fmt.Fprintf(a.Out, "%sGoogle usage unavailable; cooldown bars below come from recent local errors.%s\n", a.p.Gray, a.p.Reset)
 	}
@@ -698,6 +698,9 @@ func (a *Application) cmdList(ctx context.Context, args cliArgs) int {
 		}
 		fmt.Fprintf(a.Out, " %s [%d] %s %s%s%s %s<%s>%s%s\n", marker, i+1, avatar(getString(account, "name"), email, a.color), a.p.Bold, getString(account, "name"), a.p.Reset, a.p.Gray, email, a.p.Reset, activeLabel)
 		fmt.Fprintf(a.Out, "       ↳ Status: %s\n", accountStatus(account, a.p, now))
+		if warning := getString(getMap(account["quota_snapshot"]), "warning"); warning != "" {
+			fmt.Fprintf(a.Out, "       ↳ Quota warning: %s\n", warning)
+		}
 		if len(quotaGroups(account)) > 0 {
 			for _, rg := range quotaGroups(account) {
 				group := getMap(rg)
@@ -1029,7 +1032,7 @@ func (a *Application) cmdLimits(ctx context.Context, args cliArgs) int {
 	}
 	code := a.cmdList(ctx, args)
 	if len(failures) > 0 {
-		fmt.Fprintf(a.Err, "%sUsage refresh failed for %d account(s); cached data kept.%s\n", a.p.Yellow, len(failures), a.p.Reset)
+		fmt.Fprintf(a.Err, "%sUsage refresh completed with warnings for %d account(s); available quota retained.%s\n", a.p.Yellow, len(failures), a.p.Reset)
 	}
 	return code
 }

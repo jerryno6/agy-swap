@@ -179,6 +179,9 @@ func quotaWait(account Account, now time.Time, family string) (time.Duration, bo
 		matched = true
 		for _, rb := range getSlice(group["buckets"]) {
 			b := getMap(rb)
+			if quotaBucketDisabled(b) {
+				continue
+			}
 			f, _ := getFloat(b["remaining_fraction"])
 			if f > 0 {
 				continue
@@ -223,9 +226,11 @@ type quotaGroupHealth struct {
 }
 
 type geminiBucketQuota struct {
-	fraction float64
-	resetAt  time.Time
-	found    bool
+	fraction    float64
+	resetAt     time.Time
+	found       bool
+	disabled    bool
+	description string
 }
 
 func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found bool) {
@@ -247,12 +252,16 @@ func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found
 			id := strings.ToLower(cleanText(getString(bucket, "id")))
 
 			if window == "weekly" || strings.Contains(id, "weekly") || strings.Contains(window, "week") {
+				weekly.disabled = quotaBucketDisabled(bucket)
+				weekly.description = getString(bucket, "description")
 				weekly.fraction = fraction
 				weekly.resetAt = resetAt
 				weekly.found = true
 				found = true
 			} else if window == "5h" || strings.Contains(id, "5h") || strings.Contains(window, "5h") ||
 				window == "daily" || strings.Contains(id, "daily") || strings.Contains(window, "day") {
+				daily.disabled = quotaBucketDisabled(bucket)
+				daily.description = getString(bucket, "description")
 				daily.fraction = fraction
 				daily.resetAt = resetAt
 				daily.found = true
@@ -328,11 +337,11 @@ func extractAccountQuotaPercentages(account Account) (weeklyPct, fiveHourPct int
 		return -1, -1, false
 	}
 	wPct := -1
-	if weekly.found {
+	if weekly.found && !weekly.disabled {
 		wPct = int(math.Floor(max(0, min(1, weekly.fraction))*100 + 1e-9))
 	}
 	dPct := -1
-	if daily.found {
+	if daily.found && !daily.disabled {
 		dPct = int(math.Floor(max(0, min(1, daily.fraction))*100 + 1e-9))
 	}
 	return wPct, dPct, true
@@ -349,7 +358,7 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 
 	weeklyPct := "  --"
 	weeklyResetStr := "   --"
-	if weekly.found {
+	if weekly.found && !weekly.disabled {
 		weeklyRemain := int(math.Floor(max(0, min(1, weekly.fraction))*100 + 1e-9))
 		weeklyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", weeklyRemain))
 		weeklyResetStr = formatHealthResetWeekly(weekly.resetAt, now)
@@ -357,38 +366,49 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 
 	dailyPct := "  --"
 	dailyResetStr := "   --"
-	if daily.found {
+	if daily.found && !daily.disabled {
 		dailyRemain := int(math.Floor(max(0, min(1, daily.fraction))*100 + 1e-9))
 		dailyPct = fmt.Sprintf("%4s", fmt.Sprintf("%d%%", dailyRemain))
 		dailyResetStr = formatHealthResetDaily(daily.resetAt, now)
 	}
 
+	if weekly.disabled {
+		weeklyPct = " off"
+	}
+	if daily.disabled {
+		dailyPct = " off"
+	}
 	if warmupQuotaPending(account, now) {
 		dailyPct, dailyResetStr = "sync", "pending"
 	}
 	health := fmt.Sprintf("%s %s - %s %s", weeklyPct, weeklyResetStr, dailyPct, dailyResetStr)
 
 	minFraction := 1.0
-	if weekly.found && daily.found {
+	if weekly.found && !weekly.disabled && daily.found && !daily.disabled {
 		minFraction = min(weekly.fraction, daily.fraction)
-	} else if weekly.found {
+	} else if weekly.found && !weekly.disabled {
 		minFraction = weekly.fraction
-	} else if daily.found {
+	} else if daily.found && !daily.disabled {
 		minFraction = daily.fraction
 	}
 
-	var tone tuiHealthTone
-	if minFraction <= 0 {
-		tone = tuiHealthLimited
-	} else if minFraction <= 0.10 {
-		tone = tuiHealthCritical
-	} else if minFraction <= 0.30 {
-		tone = tuiHealthWarning
-	} else {
-		tone = tuiHealthReady
+	if (!weekly.found || weekly.disabled) && (!daily.found || daily.disabled) {
+		return health, tuiHealthPending
 	}
+	return health, quotaHealthTone(minFraction)
+}
 
-	return health, tone
+func quotaHealthTone(fraction float64) tuiHealthTone {
+	if fraction <= 0 {
+		return tuiHealthLimited
+	}
+	if fraction <= .10 {
+		return tuiHealthCritical
+	}
+	if fraction <= .30 {
+		return tuiHealthWarning
+	}
+	return tuiHealthReady
 }
 
 func quotaGroupHealths(account Account) []quotaGroupHealth {
@@ -402,6 +422,9 @@ func quotaGroupHealths(account Account) []quotaGroupHealth {
 		}
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
+			if quotaBucketDisabled(bucket) {
+				continue
+			}
 			fraction, ok := getFloat(bucket["remaining_fraction"])
 			if !ok {
 				continue
@@ -458,8 +481,11 @@ func limitedQuotaGroupLabels(groups []quotaGroupHealth) []string {
 }
 
 func accountStatus(account Account, p palette, now time.Time) string {
+	return accountStatusForGroups(account, p, now, quotaGroupHealths(account))
+}
+
+func accountStatusForGroups(account Account, p palette, now time.Time, groups []quotaGroupHealth) string {
 	tier := tierBadge(account, p)
-	groups := quotaGroupHealths(account)
 	if best, ok := bestAvailableQuotaGroup(groups); ok {
 		color := p.Green
 		if best.fraction <= .1 {

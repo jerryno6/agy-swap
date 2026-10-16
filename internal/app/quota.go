@@ -63,7 +63,7 @@ func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]a
 		delete(account, "secret_ref")
 		rememberTokenExpiry(account, refreshed)
 	}
-	info, err := q.http.cloudPost(ctx, access, "loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
+	info, err := q.http.cloudQuotaPost(ctx, access, "loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]a
 	if project == "" {
 		return nil, fmt.Errorf("Google returned no Code Assist project") //nolint:staticcheck // "Google" is a proper noun
 	}
-	summary, err := q.http.cloudPost(ctx, access, "retrieveUserQuotaSummary", map[string]any{"project": project})
+	summary, err := q.http.cloudQuotaPost(ctx, access, "retrieveUserQuotaSummary", map[string]any{"project": project})
 	if err != nil {
 		return nil, err
 	}
@@ -112,16 +112,36 @@ func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]a
 			if math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {
 				return nil, fmt.Errorf("Google returned an invalid quota fraction")
 			}
-			buckets = append(buckets, map[string]any{"id": id, "name": cleanText(firstString(bucket["displayName"], window)), "window": window, "remaining_fraction": fraction, "reset_at": reset})
+			buckets = append(buckets, map[string]any{"id": id, "name": cleanText(firstString(bucket["displayName"], window)), "window": window, "remaining_fraction": fraction, "reset_at": reset, "disabled": quotaBucketDisabled(bucket), "description": cleanText(getString(bucket, "description"))})
 		}
 		if groupID != "" && len(buckets) > 0 {
-			groups = append(groups, map[string]any{"id": groupID, "name": cleanText(firstString(group["displayName"], "Model group")), "buckets": buckets})
+			groups = append(groups, map[string]any{"id": groupID, "name": cleanText(firstString(group["displayName"], "Model group")), "buckets": buckets, "description": cleanText(getString(group, "description"))})
 		}
 	}
-	if len(groups) == 0 {
-		return nil, fmt.Errorf("Google returned no quota groups") //nolint:staticcheck // "Google" is a proper noun
+	if !hasGeminiQuota(groups) {
+		return nil, fmt.Errorf("Google returned no Gemini weekly/5h quota")
 	}
 	return normalizeQuotaSnapshot(map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}, getString(account, "email"))
+}
+
+func quotaBucketDisabled(bucket map[string]any) bool {
+	disabled, _ := bucket["disabled"].(bool)
+	return disabled
+}
+
+func hasGeminiQuota(groups []any) bool {
+	for _, raw := range groups {
+		group := getMap(raw)
+		if getString(group, "id") != "gemini" {
+			continue
+		}
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			if oneOf(getString(getMap(rawBucket), "window"), "weekly", "5h") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func quotaAge(account Account, now time.Time) (time.Duration, bool) {
@@ -148,6 +168,7 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 		account Account
 	}
 	var fetch []item
+	errorsByEmail := make(map[string]string)
 	done := 0
 	for _, email := range accounts.Order {
 		if selected != "" && selected != email {
@@ -155,7 +176,13 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 		}
 		account := accounts.ByEmail[email]
 		cacheDuration := q.CacheTTL()
-		if age, ok := quotaAge(account, now); !force && ok && age < cacheDuration {
+		// Legacy catalog and 3p-only snapshots have no Gemini timed windows.
+		// Refresh them immediately against the production quota endpoint.
+		cacheComplete := hasGeminiQuota(quotaGroups(account))
+		if age, ok := quotaAge(account, now); !force && ok && age < cacheDuration && cacheComplete {
+			if warning := getString(getMap(account["quota_snapshot"]), "warning"); warning != "" {
+				errorsByEmail[email] = warning
+			}
 			done++
 			if progress != nil {
 				progress(done, accounts.Len(), account, "cached")
@@ -168,7 +195,6 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 			fetch = append(fetch, item{email, copyAccount})
 		}
 	}
-	errorsByEmail := make(map[string]string)
 	if len(fetch) == 0 {
 		return errorsByEmail
 	}
@@ -232,6 +258,10 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 			state = "failed"
 		} else {
 			original["quota_snapshot"] = result.snapshot
+			if warning := getString(result.snapshot, "warning"); warning != "" {
+				errorsByEmail[result.item.email] = warning
+				state = "partial"
+			}
 			changed = true
 		}
 		if progress != nil {

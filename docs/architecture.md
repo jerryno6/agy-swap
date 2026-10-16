@@ -26,6 +26,8 @@
 
 The CLI talks to Google for sign-in, account, and quota data, and to GitHub for release checks and updates. It sends no telemetry.
 
+`QuotaService.Fetch` loads the project and calls `retrieveUserQuotaSummary` through the production `cloudcode-pa.googleapis.com` endpoint. Generation and model discovery continue using the existing daily endpoint. The production summary supplies Gemini weekly/5h buckets; daily summaries may contain only third-party buckets. HEALTH retains its weekly/5h percentage/reset format and details focus on Gemini 3.8 High within the shared Gemini group. Server `disabled` and description metadata are preserved: disabled windows show `off`/`Disabled` and are excluded from quota waits, auto-next inputs and warm-up eligibility. Ranking formulas and switching thresholds are unchanged. Fetch failures or missing Gemini windows preserve the previous snapshot; catalog quota is never used as a substitute. Legacy catalog snapshots remain readable, but bypass the cache TTL so the next refresh retrieves production timed windows.
+
 ## Warm-up
 
 CLI `warmup` and TUI `w` call the same service in `warmup.go`. The service validates account credentials, resolves the Code Assist project and Gemini 3.8 Flash Low model from the account catalog, saves a fresh 5h quota baseline, and issues one generation request. The transport disables redirect replay and chooses the configured TLS mode before sending, so generation errors never trigger another prompt.

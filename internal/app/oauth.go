@@ -23,6 +23,7 @@ type HTTPService struct {
 	warnOnce      sync.Once
 	oauthURL      string
 	cloudAPI      string
+	quotaAPI      string
 	userInfoURL   string
 	singleAttempt bool
 }
@@ -40,6 +41,7 @@ func NewHTTPService(errOut io.Writer) *HTTPService {
 		errOut:      errOut,
 		oauthURL:    oauthTokenURL,
 		cloudAPI:    cloudCodeAPI,
+		quotaAPI:    cloudQuotaAPI,
 		userInfoURL: "https://www.googleapis.com/oauth2/v1/userinfo",
 	}
 }
@@ -309,7 +311,15 @@ func (h *HTTPService) accessTokenData(ctx context.Context, tokenData string) (st
 	return access, "go-keyring-base64:" + base64.StdEncoding.EncodeToString(encoded), nil
 }
 func (h *HTTPService) cloudPost(ctx context.Context, access, method string, body any) (map[string]any, error) {
-	result, status, err := h.jsonRequest(ctx, http.MethodPost, h.cloudAPI+method, map[string]string{"Authorization": "Bearer " + access, "Content-Type": "application/json", "User-Agent": "antigravity"}, body, 15*time.Second, 4*1024*1024)
+	return h.cloudPostAt(ctx, h.cloudAPI, access, method, body)
+}
+
+func (h *HTTPService) cloudQuotaPost(ctx context.Context, access, method string, body any) (map[string]any, error) {
+	return h.cloudPostAt(ctx, h.quotaAPI, access, method, body)
+}
+
+func (h *HTTPService) cloudPostAt(ctx context.Context, api, access, method string, body any) (map[string]any, error) {
+	result, status, err := h.jsonRequest(ctx, http.MethodPost, api+method, map[string]string{"Authorization": "Bearer " + access, "Content-Type": "application/json", "User-Agent": "antigravity"}, body, 15*time.Second, 4*1024*1024)
 	if err != nil {
 		if status != 0 {
 			return nil, fmt.Errorf("%s failed (HTTP %d)", method, status)

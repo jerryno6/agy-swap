@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,25 +244,52 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 	for _, rawGroup := range rawGroups[:minInt(len(rawGroups), 8)] {
 		group := getMap(rawGroup)
 		groupID, name := getString(group, "id"), cleanText(getString(group, "name"))
+		source := getString(group, "source")
 		bucketsRaw := getSlice(group["buckets"])
 		if !oneOf(groupID, "gemini", "third_party") || name == "" || len(bucketsRaw) == 0 {
 			return nil, fmt.Errorf("invalid quota group for %s", email)
 		}
-		buckets := make([]any, 0, minInt(len(bucketsRaw), 8))
-		for _, rawBucket := range bucketsRaw[:minInt(len(bucketsRaw), 8)] {
+		bucketLimit := 8
+		if source == "fetchAvailableModels" && groupID == "gemini" {
+			bucketLimit = 128
+			if len(bucketsRaw) > bucketLimit {
+				return nil, fmt.Errorf("too many Gemini model quotas for %s", email)
+			}
+		}
+		buckets := make([]any, 0, minInt(len(bucketsRaw), bucketLimit))
+		for _, rawBucket := range bucketsRaw[:minInt(len(bucketsRaw), bucketLimit)] {
 			bucket := getMap(rawBucket)
 			window := getString(bucket, "window")
 			id, bucketName := cleanText(getString(bucket, "id")), cleanText(getString(bucket, "name"))
 			fraction, validFraction := getFloat(bucket["remaining_fraction"])
 			reset, resetErr := parseUTC(getString(bucket, "reset_at"))
-			if !oneOf(window, "weekly", "5h") || id == "" || bucketName == "" || !validFraction || fraction < 0 || fraction > 1 || resetErr != nil {
+			validWindow := oneOf(window, "weekly", "5h") || window == "model" && source == "fetchAvailableModels" && groupID == "gemini" && strings.HasPrefix(id, "gemini-")
+			if !validWindow || id == "" || bucketName == "" || !validFraction || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 || resetErr != nil {
 				return nil, fmt.Errorf("invalid quota bucket for %s", email)
 			}
-			buckets = append(buckets, map[string]any{"id": id, "name": bucketName, "window": window, "remaining_fraction": fraction, "reset_at": isoTime(reset)})
+			normalizedBucket := map[string]any{"id": id, "name": bucketName, "window": window, "remaining_fraction": fraction, "reset_at": isoTime(reset)}
+			if quotaBucketDisabled(bucket) {
+				normalizedBucket["disabled"] = true
+			}
+			if description := cleanText(getString(bucket, "description")); description != "" {
+				normalizedBucket["description"] = description
+			}
+			buckets = append(buckets, normalizedBucket)
 		}
-		groups = append(groups, map[string]any{"id": groupID, "name": name, "buckets": buckets})
+		normalizedGroup := map[string]any{"id": groupID, "name": name, "buckets": buckets}
+		if description := cleanText(getString(group, "description")); description != "" {
+			normalizedGroup["description"] = description
+		}
+		if source == "fetchAvailableModels" {
+			normalizedGroup["source"] = source
+		}
+		groups = append(groups, normalizedGroup)
 	}
-	return map[string]any{"observed_at": isoTime(observed), "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}, nil
+	result := map[string]any{"observed_at": isoTime(observed), "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}
+	if warning := cleanText(getString(snapshot, "warning")); warning != "" {
+		result["warning"] = warning
+	}
+	return result, nil
 }
 
 func migrateAndExpire(accounts *Accounts, now time.Time) bool {

@@ -379,7 +379,7 @@ func TestTUITopLineShowsCreditDuringSync(t *testing.T) {
 
 func TestTUIResponsiveRenderersShareVisualContract(t *testing.T) {
 	accounts := NewAccounts()
-	accounts.Set("user@example.com", quotaAccount("user@example.com", 0.85, 0.45, time.Now().Add(time.Hour)))
+	accounts.Set("user@example.com", quotaAccount("user@example.com", 0.85, 1.0, time.Now().Add(time.Hour)))
 	a := &Application{Version: "2.1.1", p: makePalette(false), color: false}
 	state := newTUIState(accounts, "user@example.com")
 	stacked := a.tuiAccountRows(state, 78, 2)
@@ -394,9 +394,16 @@ func TestTUIResponsiveRenderersShareVisualContract(t *testing.T) {
 	}
 	stackedDetail := a.tuiDetailLines(state, 62, 12)
 	wideDetail := a.tuiDetailTableLines(state, 62, 12)
-	for _, want := range []string{"user@example.com", "STATUS", "Gemini Models", "WEEKLY"} {
+	for _, want := range []string{"user@example.com", "STATUS", "GEMINI MODELS", "WEEKLY"} {
 		if !strings.Contains(strings.Join(stackedDetail, "\n"), want) || !strings.Contains(strings.Join(wideDetail, "\n"), want) {
 			t.Fatalf("detail renderers lost shared field %q:\nstacked=%q\nwide=%q", want, stackedDetail, wideDetail)
+		}
+	}
+	for _, rows := range [][]string{stackedDetail, wideDetail} {
+		detail := strings.Join(rows, "\n")
+		weeklyIndex, fiveHourIndex := strings.Index(detail, "WEEKLY"), strings.Index(detail, "FIVE HOUR")
+		if weeklyIndex < 0 || fiveHourIndex <= weeklyIndex || strings.Contains(detail, "Third Party") || strings.Contains(detail, "Claude/GPT") || strings.Contains(detail, "Per-model quota") {
+			t.Fatalf("detail must prioritize only Gemini weekly then five-hour quota: %s", detail)
 		}
 	}
 	if len(stackedDetail) > 12 || len(wideDetail) > 12 {
@@ -489,7 +496,7 @@ func TestTUICompactTallViewportKeepsSelectedDetail(t *testing.T) {
 	state := newTUIState(accounts, "user@example.com")
 	lines := a.tuiLines(state, 58, 24)
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"ACCOUNT HEALTH", "STATUS", "Gemini Models"} {
+	for _, want := range []string{"ACCOUNT HEALTH", "STATUS", "GEMINI MODELS"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("compact tall viewport missing %q: %q", want, lines)
 		}
@@ -725,26 +732,35 @@ func TestNextAccountSelectionPreservesUnknownAndCooldownSemantics(t *testing.T) 
 }
 
 func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
-	var oauthCalls atomic.Int32
+	var oauthCalls, summaryCalls atomic.Int32
+	var summaryResponse atomic.Value
+	summaryResponse.Store(`{"groups":[{"displayName":"Gemini","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.4,"resetTime":"2030-01-01T00:00:00Z"},{"bucketId":"gemini-5h","displayName":"Five Hour","window":"5h","remainingFraction":0.8,"resetTime":"2030-01-01T00:00:00Z"}]},{"displayName":"Third Party","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.2,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/oauth":
 			oauthCalls.Add(1)
 			fmt.Fprint(w, `{"access_token":"refreshed"}`)
-		case "/loadCodeAssist":
+		case "/quota/loadCodeAssist":
 			fmt.Fprint(w, `{"cloudaicompanionProject":"p","paidTier":{"id":"g1-pro-tier"}}`)
-		case "/retrieveUserQuotaSummary":
-			fmt.Fprint(w, `{"groups":[{"displayName":"Gemini","buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.4,"resetTime":"2030-01-01T00:00:00Z"}]},{"displayName":"Third Party","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.2,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
+		case "/quota/retrieveUserQuotaSummary":
+			summaryCalls.Add(1)
+			fmt.Fprint(w, summaryResponse.Load().(string))
 		default:
+			// The daily/model endpoint is deliberately separate from quota.
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 	httpService := NewHTTPService(io.Discard)
+	if httpService.quotaAPI != "https://cloudcode-pa.googleapis.com/v1internal:" || httpService.cloudAPI != cloudCodeAPI {
+		t.Fatal("quota must use production separately from generation/catalog")
+	}
 	httpService.oauthURL = server.URL + "/oauth"
-	httpService.cloudAPI = server.URL + "/"
-	quota := NewQuotaService(httpService, nil)
+	httpService.cloudAPI = server.URL + "/daily/"
+	httpService.quotaAPI = server.URL + "/quota/"
+	store := NewStore(testPaths(t))
+	quota := NewQuotaService(httpService, store)
 	account := Account{"email": "user@example.com", "token_data": tokenBlob(t, "user@example.com", true, "r", time.Now().Add(time.Hour))}
 	snapshot, err := quota.Fetch(context.Background(), account)
 	if err != nil {
@@ -756,6 +772,83 @@ func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 	groups := getSlice(snapshot["groups"])
 	if len(groups) != 2 || getString(getMap(groups[0]), "id") != "gemini" || getString(getMap(groups[1]), "id") != "third_party" {
 		t.Fatalf("groups = %#v", groups)
+	}
+	account["quota_snapshot"] = snapshot
+	if weekly, fiveHour, found := geminiQuotaBuckets(account); !found || weekly.fraction != .4 || fiveHour.fraction != .8 {
+		t.Fatalf("production windows not routed into legacy quota pipeline: %+v %+v", weekly, fiveHour)
+	}
+
+	// A disabled 5h fraction of 1 is not usable capacity after weekly exhaustion.
+	summaryResponse.Store(`{"groups":[{"displayName":"Gemini","buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0,"resetTime":"2030-01-01T00:00:00Z"},{"bucketId":"gemini-5h","displayName":"Five Hour","window":"5h","remainingFraction":1,"disabled":true,"description":"You have hit your weekly limit","resetTime":"2030-01-01T00:00:00Z"}]}]}`)
+	snapshot, err = quota.Fetch(context.Background(), account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account["quota_snapshot"] = snapshot
+	accounts := NewAccounts()
+	accounts.Set("user@example.com", account)
+	if err := store.Save(accounts); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account = loaded.ByEmail["user@example.com"]
+	_, fiveHour, _ := geminiQuotaBuckets(account)
+	if !fiveHour.disabled || fiveHour.description != "You have hit your weekly limit" {
+		t.Fatalf("disabled metadata lost on persistence: %+v", fiveHour)
+	}
+	if health, tone := accountGeminiHealth(account, time.Now()); !strings.Contains(health, "off") || strings.Contains(health, "100%") || tone != tuiHealthLimited {
+		t.Fatalf("disabled quota presented as available: %q tone=%v", health, tone)
+	}
+	app := &Application{p: makePalette(false)}
+	ui := newTUIState(loaded, "user@example.com")
+	details := strings.Join(app.tuiDetailTableLines(ui, 120, 30), "\n")
+	if !strings.Contains(details, "Disabled") || !strings.Contains(details, "weekly limit") || strings.Contains(details, "100.00%") {
+		t.Fatalf("disabled details = %s", details)
+	}
+	if triggered, result := CheckAutoNextThreshold(account, time.Now()); !triggered || result.Has5h || !result.HasWeekly {
+		t.Fatalf("weekly exhaustion / disabled five hour threshold = %+v", result)
+	}
+	if weeklyPct, fiveHourPct, ok := extractAccountQuotaPercentages(account); !ok || weeklyPct != 0 || fiveHourPct != -1 {
+		t.Fatalf("disabled percentage must be unknown: weekly=%d fiveHour=%d ok=%v", weeklyPct, fiveHourPct, ok)
+	}
+	encodedDisabled, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allDisabled map[string]any
+	if err := json.Unmarshal(encodedDisabled, &allDisabled); err != nil {
+		t.Fatal(err)
+	}
+	for _, rawBucket := range getSlice(getMap(getSlice(allDisabled["groups"])[0])["buckets"]) {
+		getMap(rawBucket)["disabled"] = true
+	}
+	if health, tone := accountGeminiHealth(Account{"quota_snapshot": allDisabled}, time.Now()); tone != tuiHealthPending {
+		t.Fatalf("all disabled health must be neutral: %q tone=%v", health, tone)
+	}
+	if fullGeminiFiveHour(snapshot) {
+		t.Fatal("disabled five hour must not enable warmup")
+	}
+	if _, err := warmupFiveHour(snapshot); err == nil {
+		t.Fatal("disabled five hour must not provide warmup baseline")
+	}
+
+	// Current catalog-only caches must be refreshed immediately, even inside TTL.
+	legacySnapshot := map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": "g1-pro-tier", "name": "Pro"}, "groups": []any{map[string]any{"id": "gemini", "name": "Gemini per-model quota", "source": "fetchAvailableModels", "buckets": []any{map[string]any{"id": "gemini-3.8-flash-tiered", "name": "Gemini", "window": "model", "remaining_fraction": 1.0, "reset_at": "2030-01-01T00:00:00Z"}}}}}
+	account["quota_snapshot"] = legacySnapshot
+	before := summaryCalls.Load()
+	if failures := quota.Refresh(context.Background(), loaded, false, nil); len(failures) != 0 || summaryCalls.Load() <= before || !hasGeminiQuota(quotaGroups(account)) {
+		t.Fatalf("legacy model cache skipped production refresh: %v", failures)
+	}
+	previous := account["quota_snapshot"]
+	summaryResponse.Store(`{"groups":[{"displayName":"Third Party","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.2,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
+	if failures := quota.Refresh(context.Background(), loaded, true, nil); failures["user@example.com"] == "" {
+		t.Fatal("missing production Gemini must fail rather than substitute model catalog")
+	}
+	if !reflect.DeepEqual(account["quota_snapshot"], previous) {
+		t.Fatal("failed refresh replaced usable timed-window snapshot")
 	}
 }
 
@@ -774,6 +867,7 @@ func TestQuotaRefreshIsConcurrentAndKeepsCachedFailure(t *testing.T) {
 	store := NewStore(paths)
 	httpService := NewHTTPService(io.Discard)
 	httpService.cloudAPI = server.URL + "/"
+	httpService.quotaAPI = server.URL + "/"
 	service := NewQuotaService(httpService, store)
 	accounts := NewAccounts()
 	for i := 0; i < 8; i++ {
@@ -790,6 +884,7 @@ func TestQuotaRefreshIsConcurrentAndKeepsCachedFailure(t *testing.T) {
 	}
 	cached := accounts.ByEmail[accounts.Order[0]]["quota_snapshot"]
 	httpService.cloudAPI = "http://127.0.0.1:1/"
+	httpService.quotaAPI = "http://127.0.0.1:1/"
 	failures = service.Refresh(context.Background(), accounts, true, nil)
 	if len(failures) != 8 {
 		t.Fatalf("expected failures, got %d", len(failures))
@@ -839,6 +934,7 @@ func TestQuotaRefreshPersistsTokenHash(t *testing.T) {
 	httpService := NewHTTPService(io.Discard)
 	httpService.oauthURL = server.URL + "/oauth"
 	httpService.cloudAPI = server.URL + "/"
+	httpService.quotaAPI = server.URL + "/"
 	service := NewQuotaService(httpService, store)
 	service.SetVault(vault)
 	email := "user@example.com"
@@ -876,6 +972,7 @@ func TestNextKeepsFreshQuotaWhenRefreshFails(t *testing.T) {
 	var output bytes.Buffer
 	httpService := NewHTTPService(&output)
 	httpService.cloudAPI = "http://127.0.0.1:1/"
+	httpService.quotaAPI = "http://127.0.0.1:1/"
 	quota := NewQuotaService(httpService, store)
 	app := &Application{
 		paths:       paths,

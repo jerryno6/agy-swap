@@ -120,6 +120,9 @@ func CheckAutoNextThresholdWithLimits(account Account, now time.Time, weeklyThre
 		buckets := getSlice(group["buckets"])
 		for _, rawBucket := range buckets {
 			bucket := getMap(rawBucket)
+			if quotaBucketDisabled(bucket) {
+				continue
+			}
 			if bucket == nil {
 				continue
 			}
@@ -255,6 +258,9 @@ func autoNextAccountRemaining(account Account) (float64, bool) {
 		buckets := getSlice(group["buckets"])
 		for _, rawBucket := range buckets {
 			bucket := getMap(rawBucket)
+			if quotaBucketDisabled(bucket) {
+				continue
+			}
 			if bucket == nil {
 				continue
 			}
@@ -302,6 +308,9 @@ func autoNextCandidateScore(account Account, weeklyLimit, fiveHourLimit float64,
 		groupHasWeekly, groupHasFiveHour := false, false
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
+			if quotaBucketDisabled(bucket) {
+				continue
+			}
 			window := strings.ToLower(strings.TrimSpace(getString(bucket, "window")))
 			fraction, ok := getFloat(bucket["remaining_fraction"])
 			if !ok || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {

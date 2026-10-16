@@ -865,11 +865,21 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 	now := a.renderTime()
 	name := firstString(tuiText(getString(account, "name")), "Google User")
 	labelWidth := maxInt(12, minInt(22, width/3))
-	statusStr := accountStatus(account, a.p, now)
+	var geminiHealth []quotaGroupHealth
+	for _, group := range quotaGroupHealths(account) {
+		if group.id == selectionQuotaFamily {
+			geminiHealth = append(geminiHealth, group)
+		}
+	}
+	statusStr := accountStatusForGroups(account, a.p, now, geminiHealth)
 	var actionStr string
 	if needs, reason := state.accountNeedsAttention(email); needs {
-		statusStr = a.p.Yellow + "[Needs Re-auth]" + a.p.Reset + " · " + reason
-		actionStr = "Run 'agy-swap add' to re-authenticate or 'd' to remove"
+		statusStr = a.p.Yellow + "[Needs attention]" + a.p.Reset + " · " + reason
+		actionStr = "Press 'r' to retry quota refresh"
+		if strings.Contains(strings.ToLower(reason), "token") || strings.Contains(strings.ToLower(reason), "vault") {
+			statusStr = a.p.Yellow + "[Needs Re-auth]" + a.p.Reset + " · " + reason
+			actionStr = "Run 'agy-swap add' to re-authenticate or 'd' to remove"
+		}
 	}
 	rows := []string{
 		a.tuiSectionTitle("SELECTED ACCOUNT"),
@@ -881,21 +891,34 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 	if actionStr != "" {
 		rows = append(rows, tuiDetailKV("ACTION", a.p.White+actionStr+a.p.Reset, width, labelWidth, a.p))
 	}
-	for _, rawGroup := range quotaGroups(account) {
-		group := getMap(rawGroup)
-		groupName := firstString(tuiText(getString(group, "name")), "Model group")
-		rows = append(rows, a.p.Bold+a.p.Blue+tuiText(groupName)+a.p.Reset)
-		for _, rawBucket := range getSlice(group["buckets"]) {
-			bucket := getMap(rawBucket)
-			valueWidth := maxInt(8, width-labelWidth-3)
-			barWidth := tuiQuotaBarWidth(valueWidth)
-			value := formatQuotaBarResponsive(bucket, a.p, now, barWidth, valueWidth)
-			if getString(group, "id") == selectionQuotaFamily &&
-				getString(bucket, "window") == "5h" && warmupQuotaPending(account, now) {
-				value = "Syncing after warm-up"
+	// Gemini 3.8 High is the account-selection target. Its shared weekly
+	// and five-hour limits take priority over token and diagnostic details.
+	rows = append(rows, a.p.Bold+a.p.Blue+"GEMINI MODELS"+a.p.Reset,
+		a.tuiSecondary("Gemini 3.8 High"))
+	weekly, fiveHour, _ := geminiQuotaBuckets(account)
+	valueWidth := maxInt(8, width-labelWidth-3)
+	for _, item := range []struct {
+		label  string
+		quota  geminiBucketQuota
+		window string
+	}{
+		{"Weekly Limit", weekly, "weekly"},
+		{"Five Hour Limit", fiveHour, "5h"},
+	} {
+		value := "Unavailable"
+		if item.quota.disabled {
+			value = "Disabled"
+			if item.quota.description != "" {
+				value += " · " + item.quota.description
 			}
-			rows = append(rows, tuiDetailKV(tuiText(getString(bucket, "name")), value, width, labelWidth, a.p))
+		} else if item.quota.found {
+			bucket := map[string]any{"remaining_fraction": item.quota.fraction, "reset_at": isoTime(item.quota.resetAt)}
+			value = formatQuotaBarResponsive(bucket, a.p, now, tuiQuotaBarWidth(valueWidth), valueWidth)
 		}
+		if item.window == "5h" && warmupQuotaPending(account, now) {
+			value = "Syncing after warm-up"
+		}
+		rows = append(rows, tuiDetailKV(item.label, value, width, labelWidth, a.p))
 	}
 	if len(quotaGroups(account)) == 0 {
 		for _, limit := range activeLimits(account, now) {
@@ -910,7 +933,7 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 		rows = append(rows, tuiDetailKV("SESSION TOKEN", reset, width, labelWidth, a.p))
 	}
 	if reason := tuiText(state.quotaErrors[email]); reason != "" {
-		rows = append(rows, tuiDetailKV("USAGE", a.p.Yellow+"Unavailable"+a.p.Reset+" · "+reason, width, labelWidth, a.p))
+		rows = append(rows, tuiDetailKV("USAGE", a.p.Yellow+"Refresh warning"+a.p.Reset+" · "+reason, width, labelWidth, a.p))
 	}
 	if len(rows) > maxRows {
 		rows = rows[:maxRows]
