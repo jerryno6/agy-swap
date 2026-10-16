@@ -6,7 +6,7 @@ This document guides contributors through setting up, testing, and verifying cha
 
 ## 1. Prerequisites
 
-- **Go**: Version 1.26 or newer (`go version`).
+- **Go**: Version 1.27.2 or newer (`go version`). The module's Go directive selects the stable toolchain automatically when `GOTOOLCHAIN=auto` is enabled.
 - **Make**: Standard POSIX make.
 - **Xcode Command Line Tools** (macOS only): Required for compiling CGO bindings with Apple's `Security.framework`.
 - **Bun** or **Node.js** (Optional): For developing the React site and native browser terminal in `site/`.
@@ -32,6 +32,9 @@ make race
 
 # Run Go static analysis
 make vet
+
+# Check reachable vulnerabilities with the pinned scanner
+make vuln
 
 # Run memory allocation benchmarks
 make benchmark

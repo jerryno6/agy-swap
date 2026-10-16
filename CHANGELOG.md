@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.19
+
+- Sessions: synchronize the standalone Jetski OAuth token across switching, login rollback and logout while preserving custom secure-store verification.
+- Rotation: manual next skips the active account when another account is eligible; priority scoring and the TUI remain unchanged.
+- Reliability: reject overflowing cooldowns and trailing credential JSON; hand terminal ownership to agy during Unix login.
+- CLI: compact quota labels and local reset timestamps; require exact installer binary versions.
+- Build: require Go 1.27.2, refresh dependencies, and add vulnerability/provenance checks plus a standalone experimental Windows build.
+
 ## 3.1.18
 
 - Quota: read Gemini weekly and five-hour limits from the production quota endpoint; refresh legacy catalog and third-party-only caches.

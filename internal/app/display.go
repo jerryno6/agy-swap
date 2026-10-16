@@ -100,25 +100,34 @@ func parseDuration(value string) (time.Duration, bool) {
 		return 0, false
 	}
 	if allDigits(value) {
-		var mins int64
-		if _, err := fmt.Sscan(value, &mins); err != nil {
-			return 0, false
-		}
-		d := time.Duration(mins) * time.Minute
-		return d, d <= maxLimitDuration
+		return boundedDuration(value, time.Minute)
 	}
 	match := durationPattern.FindStringSubmatch(value)
 	if match == nil || strings.Join(match[1:], "") == "" {
 		return 0, false
 	}
-	var values [4]int64
-	for i := range values {
-		if match[i+1] != "" {
-			_, _ = fmt.Sscan(match[i+1], &values[i])
+	var total time.Duration
+	for i, unit := range [4]time.Duration{24 * time.Hour, time.Hour, time.Minute, time.Second} {
+		if match[i+1] == "" {
+			continue
 		}
+		part, ok := boundedDuration(match[i+1], unit)
+		if !ok {
+			return 0, false
+		}
+		total += part
 	}
-	d := time.Duration(values[0])*24*time.Hour + time.Duration(values[1])*time.Hour + time.Duration(values[2])*time.Minute + time.Duration(values[3])*time.Second
-	return d, d >= 0 && d <= maxLimitDuration
+	return total, total <= maxLimitDuration
+}
+
+// boundedDuration converts a digit string of units, rejecting any count beyond
+// the limit before multiplying so oversized input cannot overflow and wrap.
+func boundedDuration(digits string, unit time.Duration) (time.Duration, bool) {
+	var count int64
+	if _, err := fmt.Sscan(digits, &count); err != nil || count < 0 || count > int64(maxLimitDuration/unit) {
+		return 0, false
+	}
+	return time.Duration(count) * unit, true
 }
 
 func allDigits(s string) bool {
@@ -560,6 +569,17 @@ func renderFractionalBar(fraction float64, width int, filledColor, emptyColor, r
 	return sb.String()
 }
 
+func quotaBucketLabel(bucket map[string]any) string {
+	switch getString(bucket, "window") {
+	case "weekly":
+		return "Weekly"
+	case "5h":
+		return "5-Hour"
+	default:
+		return getString(bucket, "name")
+	}
+}
+
 func formatQuotaBar(bucket map[string]any, p palette, now time.Time, width int) string {
 	fraction, _ := getFloat(bucket["remaining_fraction"])
 	fraction = max(0, min(1, fraction))
@@ -578,8 +598,9 @@ func formatQuotaBar(bucket map[string]any, p palette, now time.Time, width int) 
 		} else {
 			reset = " · refresh due"
 		}
+		reset += " (" + at.In(now.Location()).Format("Mon 02 Jan 15:04 -0700") + ")"
 	}
-	return fmt.Sprintf("[%s] %.2f%% remaining%s", bar, quotaPercent(fraction, 2), reset)
+	return fmt.Sprintf("[%s] %6.2f%% remaining%s", bar, quotaPercent(fraction, 2), reset)
 }
 
 // formatQuotaBarResponsive keeps the value and reset window visible when a

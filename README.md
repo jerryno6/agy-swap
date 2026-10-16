@@ -30,7 +30,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/aklkbqx/agy-swap/main/install.ps1 | iex
 ```
 
-With Go 1.26 or later:
+With Go 1.27.2 or later:
 
 ```bash
 go install github.com/aklkbqx/agy-swap/cmd/agy-swap@latest
@@ -40,12 +40,12 @@ Pre-built binaries for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm
 
 ### Build from source
 
-Requirements: Go 1.26 or later. macOS source builds require Xcode Command Line Tools and `CGO_ENABLED=1` for Keychain writes.
+Requirements: Go 1.27.2 or later. macOS source builds require Xcode Command Line Tools and `CGO_ENABLED=1` for Keychain writes.
 
 ```bash
 git clone https://github.com/aklkbqx/agy-swap.git
 cd agy-swap
-go build -trimpath -ldflags "-s -w -X main.version=3.1.18 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
+go build -trimpath -ldflags "-s -w -X main.version=3.1.19 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
 ./agy-swap version
 ```
 

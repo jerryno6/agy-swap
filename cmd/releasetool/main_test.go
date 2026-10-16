@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 )
 
@@ -77,6 +78,35 @@ func TestVerifyAssetsRequiresAllReleasePlatforms(t *testing.T) {
 	if err := verifyAssets("2.0.0", dir); err == nil {
 		t.Fatal("missing Windows asset was accepted")
 	}
+	t.Run("build provenance", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/custom\r\ngo 1.27.2\r\ntoolchain go1.27.3\r\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		module, floor, err := readModuleFloor(root)
+		if err != nil || module != "example.com/custom" || floor != "go1.27.3" {
+			t.Fatalf("readModuleFloor = %q, %q, %v", module, floor, err)
+		}
+		info := &debug.BuildInfo{GoVersion: "go1.27.3", Main: debug.Module{Path: module, Version: "(devel)"}, Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "tagged-commit"}, {Key: "vcs.modified", Value: "false"}}}
+		if err := checkBuildInfo(info, module, floor, "tagged-commit"); err != nil {
+			t.Fatal(err)
+		}
+		info.GoVersion = "go1.27.2"
+		if err := checkBuildInfo(info, module, floor, "tagged-commit"); err == nil {
+			t.Fatal("outdated toolchain accepted")
+		}
+		info.GoVersion = "go1.27.3"
+		info.Settings[1].Value = "true"
+		if err := checkBuildInfo(info, module, floor, "tagged-commit"); err == nil {
+			t.Fatal("dirty build accepted as release")
+		}
+		info.Settings[1].Value = "false"
+		info.Main.Path = "example.com/other"
+		if err := checkBuildInfo(info, module, floor, "tagged-commit"); err == nil {
+			t.Fatal("different module accepted")
+		}
+	})
+
 }
 
 func TestCalculateNextVersion(t *testing.T) {

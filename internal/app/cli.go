@@ -93,6 +93,13 @@ func (a *Application) loginPollDelay() time.Duration {
 	return defaultLoginPollInterval
 }
 
+// waitLoginCommand returns terminal ownership before the TUI resumes.
+func waitLoginCommand(command *exec.Cmd) error {
+	err := command.Wait()
+	reclaimLoginTerminal(command)
+	return err
+}
+
 func stopLoginCommand(command *exec.Cmd, done <-chan error) {
 	if command == nil || command.Process == nil {
 		return
@@ -477,7 +484,7 @@ func (a *Application) addLoginFlow(ctx context.Context) int {
 	defer func() { _ = lock.Close() }()
 	current := a.credentials.Current(ctx)
 	backupSecure := a.credentials.Secure(ctx)
-	snapshot, err := snapshotFiles(a.paths.OAuthToken, a.paths.OAuthCredentials, a.paths.GoogleAccounts)
+	snapshot, err := snapshotFiles(a.credentials.sessionFilePaths(true)...)
 	if err != nil {
 		return a.storeError(err)
 	}
@@ -550,7 +557,7 @@ func (a *Application) addLoginFlow(ctx context.Context) int {
 		return 1
 	}
 	commandDone := make(chan error, 1)
-	go func() { commandDone <- command.Wait() }()
+	go func() { commandDone <- waitLoginCommand(command) }()
 	timeout := time.NewTimer(a.loginWaitTimeout())
 	defer timeout.Stop()
 	poll := time.NewTicker(a.loginPollDelay())
@@ -674,7 +681,7 @@ func (a *Application) cmdList(ctx context.Context, args cliArgs) int {
 	}
 	current := a.credentials.Current(ctx)
 	active := a.activeEmail(ctx, accounts, current)
-	now := time.Now().UTC()
+	now := a.renderTime()
 	fmt.Fprintf(a.Out, "\n%sMANAGED ACCOUNTS%s\n%s%s%s\n", a.p.Bold, a.p.Reset, a.p.Gray, strings.Repeat("─", 65), a.p.Reset)
 	hasQuota, hasLimits := false, false
 	for _, email := range accounts.Order {
@@ -707,7 +714,7 @@ func (a *Application) cmdList(ctx context.Context, args cliArgs) int {
 				fmt.Fprintf(a.Out, "       ↳ %s\n", getString(group, "name"))
 				for _, rb := range getSlice(group["buckets"]) {
 					bucket := getMap(rb)
-					fmt.Fprintf(a.Out, "          %s: %s\n", getString(bucket, "name"), formatQuotaBar(bucket, a.p, now, 12))
+					fmt.Fprintf(a.Out, "          %-6s: %s\n", quotaBucketLabel(bucket), formatQuotaBar(bucket, a.p, now, 12))
 				}
 			}
 		} else {
@@ -879,6 +886,21 @@ func selectNext(accounts *Accounts, active, family string) (Account, int) {
 	return best.account, 1
 }
 
+// nextEligible picks the best-ranked ready account other than the active one.
+// Balanced ranking can put the active account first, and next must move away
+// from it; it is kept only when no other account is ready.
+func nextEligible(ranked []recommendation, active string) (recommendation, bool) {
+	for _, item := range ranked {
+		if item.Ready && !strings.EqualFold(item.Email, active) {
+			return item, true
+		}
+	}
+	if len(ranked) > 0 && ranked[0].Ready {
+		return ranked[0], true
+	}
+	return recommendation{}, false
+}
+
 func (a *Application) cmdNext(ctx context.Context, args cliArgs) int {
 	accounts, err := a.store.Load(true)
 	if err != nil {
@@ -904,11 +926,13 @@ func (a *Application) cmdNext(ctx context.Context, args cliArgs) int {
 		settings.Policy.Name = "round-robin"
 	}
 	recommendations := a.buildRecommendations(ctx, accounts, settings, "", args.family, "")
-	if len(recommendations) == 0 || !recommendations[0].Ready {
+	active := a.activeEmail(ctx, accounts, a.credentials.Current(ctx))
+	choice, ok := nextEligible(recommendations, active)
+	if !ok {
 		fmt.Fprintln(a.Err, "No eligible account with fresh quota; use switch ACCOUNT for an explicit override.")
 		return 1
 	}
-	next := accounts.ByEmail[recommendations[0].Email]
+	next := accounts.ByEmail[choice.Email]
 	lock, err := acquireFileLock(a.paths.SessionLock)
 	if err != nil {
 		return a.storeError(err)

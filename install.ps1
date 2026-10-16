@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
-if ([string]::IsNullOrWhiteSpace($Version)) { $Version = '3.1.18' }
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = '3.1.19' }
 if ([string]::IsNullOrWhiteSpace($TargetDir)) { $TargetDir = Join-Path $env:LOCALAPPDATA 'Programs\agy-swap' }
 
 $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
@@ -51,7 +51,9 @@ try {
   Write-Host "  ✓ Cryptographic SHA-256 integrity verified: $shortHash..." -ForegroundColor Green
 
   $reportedVersion = (& (Join-Path $tmp $asset) --version | Out-String).Trim()
-  if (-not $reportedVersion.StartsWith("agy-swap v$Version")) {
+  $reportedExitCode = $LASTEXITCODE
+  $versionFields = $reportedVersion -split '\s+'
+  if ($reportedExitCode -ne 0 -or $versionFields.Length -lt 2 -or $versionFields[0] -cne 'agy-swap' -or $versionFields[1] -cne "v$Version") {
     throw "Downloaded binary reported an unexpected version: $reportedVersion"
   }
   Write-Host "  ✓ Binary self-test passed: $reportedVersion" -ForegroundColor Green

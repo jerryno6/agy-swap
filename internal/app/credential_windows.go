@@ -3,9 +3,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -24,9 +28,23 @@ var errWindowsCredentialTooLarge = errors.New("Windows credential exceeds the Cr
 // id_token under token while the root id_token is stale; the existing token
 // readers prefer the nested value, so promote it before removing the duplicate.
 func windowsSessionCredential(value string) (string, error) {
-	decoded := decodeToken(value)
-	if decoded == nil {
+	raw := []byte(value)
+	if strings.HasPrefix(value, "go-keyring-base64:") {
+		var err error
+		raw, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(value, "go-keyring-base64:"))
+		if err != nil {
+			return "", errors.New("invalid session credential encoding")
+		}
+	}
+	var decoded map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&decoded) != nil || decoded == nil {
 		return "", errors.New("invalid session credential JSON")
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return "", errors.New("trailing session credential data")
 	}
 	if nested := getMap(decoded["token"]); nested != nil {
 		if nestedID := getString(nested, "id_token"); nestedID != "" {

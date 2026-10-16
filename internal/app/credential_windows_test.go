@@ -134,7 +134,7 @@ func TestWindowsSessionCredentialEnforcesExactByteLimit(t *testing.T) {
 }
 
 func TestWindowsSessionCredentialRejectsInvalidJSONAndBase64(t *testing.T) {
-	for _, value := range []string{"not-json", "go-keyring-base64:%%%"} {
+	for _, value := range []string{"not-json", "go-keyring-base64:%%%", "null", "[]", `{} {}`, `{} true`, `{} trailing`} {
 		if _, err := windowsSessionCredential(value); err == nil {
 			t.Fatalf("accepted invalid credential payload %q", value)
 		}

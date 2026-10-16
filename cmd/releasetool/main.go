@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -23,7 +24,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: releasetool <checksums|verify-version|verify-assets|verify-metadata|bump> [args]")
+		return errors.New("usage: releasetool <checksums|verify-version|verify-assets|verify-metadata|verify-source|verify-builds|verify-experiment|bump> [args]")
 	}
 	switch args[0] {
 	case "bump":
@@ -55,6 +56,30 @@ func run(args []string) error {
 			return errors.New("usage: releasetool verify-assets VERSION DIST_DIR")
 		}
 		return verifyAssets(args[1], args[2])
+	case "verify-source":
+		if len(args) != 3 {
+			return errors.New("usage: releasetool verify-source VERSION ROOT")
+		}
+		return verifySource(args[1], args[2], runtime.Version())
+	case "verify-builds":
+		if len(args) != 4 {
+			return errors.New("usage: releasetool verify-builds VERSION DIST_DIR ROOT")
+		}
+		module, floor, err := readModuleFloor(args[3])
+		if err != nil {
+			return err
+		}
+		revision, err := gitOutput(args[3], "rev-parse", "refs/tags/v"+strings.TrimPrefix(args[1], "v")+"^{commit}")
+		if err != nil {
+			return err
+		}
+		return verifyBuilds(args[1], args[2], module, floor, revision)
+	case "verify-experiment":
+		if len(args) != 5 {
+			return errors.New("usage: releasetool verify-experiment VERSION BUILD_ID BINARY ROOT")
+		}
+		return verifyExperiment(args[1], args[2], args[3], args[4])
+
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -386,6 +411,6 @@ func bumpVersion(target, root string) error {
 		return fmt.Errorf("metadata verification failed after bump: %w", err)
 	}
 
-	fmt.Printf("✓ Version successfully bumped from %s to %s across all surfaces.\n", current, next)
+	fmt.Printf("ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Version successfully bumped from %s to %s across all surfaces.\n", current, next)
 	return nil
 }

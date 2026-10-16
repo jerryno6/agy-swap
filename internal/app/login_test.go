@@ -72,6 +72,13 @@ func TestAddLoginFlowAttachesIOAndStopsWhenAgyExits(t *testing.T) {
 	backend := &fakeCredentialBackend{token: previousToken}
 	credentials := NewCredentials(paths)
 	credentials.backend = backend
+	if !credentials.writeOAuthFiles(previousToken, "previous@example.com") {
+		t.Fatal("could not prepare previous mirrored session")
+	}
+	previousJetski, err := os.ReadFile(paths.JetskiToken)
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := NewStore(paths)
 	accounts := NewAccounts()
 	accounts.Set("previous@example.com", newAccount("previous@example.com", "Previous User", previousToken))
@@ -124,6 +131,9 @@ func TestAddLoginFlowAttachesIOAndStopsWhenAgyExits(t *testing.T) {
 	}
 	if backend.token != previousToken {
 		t.Fatalf("previous credential was not restored: %q", backend.token)
+	}
+	if restored, err := os.ReadFile(paths.JetskiToken); err != nil || !bytes.Equal(restored, previousJetski) {
+		t.Fatalf("previous Jetski session was not restored: %v", err)
 	}
 }
 

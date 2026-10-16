@@ -25,7 +25,7 @@ func testPaths(t *testing.T) Paths {
 	t.Helper()
 	home := t.TempDir()
 	config := filepath.Join(home, ".gemini", "agy-swap")
-	return Paths{Home: home, ConfigDir: config, Accounts: filepath.Join(config, "accounts.json"), AccountsBackup: filepath.Join(config, "accounts.json.bak"), AccountsLock: filepath.Join(config, ".accounts.lock"), SessionLock: filepath.Join(config, ".session.lock"), LogCache: filepath.Join(config, "log-cache-v1.json"), Settings: filepath.Join(config, "config.json"), History: filepath.Join(config, "history-v1.jsonl"), RuntimeState: filepath.Join(config, "runtime-state.json"), JournalDir: filepath.Join(config, "journals"), OAuthToken: filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), OAuthCredentials: filepath.Join(home, ".gemini", "oauth_creds.json"), GoogleAccounts: filepath.Join(home, ".gemini", "google_accounts.json")}
+	return Paths{Home: home, ConfigDir: config, Accounts: filepath.Join(config, "accounts.json"), AccountsBackup: filepath.Join(config, "accounts.json.bak"), AccountsLock: filepath.Join(config, ".accounts.lock"), SessionLock: filepath.Join(config, ".session.lock"), LogCache: filepath.Join(config, "log-cache-v1.json"), Settings: filepath.Join(config, "config.json"), History: filepath.Join(config, "history-v1.jsonl"), RuntimeState: filepath.Join(config, "runtime-state.json"), JournalDir: filepath.Join(config, "journals"), OAuthToken: filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), OAuthCredentials: filepath.Join(home, ".gemini", "oauth_creds.json"), GoogleAccounts: filepath.Join(home, ".gemini", "google_accounts.json"), JetskiToken: filepath.Join(home, ".gemini", "jetski-standalone-oauth-token")}
 }
 
 func tokenBlob(t *testing.T, email string, verified bool, refresh string, expiry time.Time) string {
@@ -140,7 +140,7 @@ func TestDurationParserStrictAndBounded(t *testing.T) {
 			t.Fatalf("%q: got %s, %v", input, got, ok)
 		}
 	}
-	for _, input := range []string{"", "4hours", "8d", "1h junk", "-1"} {
+	for _, input := range []string{"", "4hours", "8d", "1h junk", "-1", "3074457345618258603", "2562048h", "9223372036854775807s", "7d1s", "999999999999999999999999d"} {
 		if _, ok := parseDuration(input); ok {
 			t.Fatalf("accepted %q", input)
 		}
@@ -716,6 +716,18 @@ func TestTUIViewsPaletteFormsAndJobsKeepFrameGeometry(t *testing.T) {
 }
 
 func TestNextAccountSelectionPreservesUnknownAndCooldownSemantics(t *testing.T) {
+	ranked := []recommendation{{Email: "one@example.com", Ready: true}, {Email: "two@example.com", Ready: true}}
+	if choice, ok := nextEligible(ranked, "ONE@example.com"); !ok || choice.Email != "two@example.com" {
+		t.Fatalf("next retained active account despite a ready alternative: %#v, %v", choice, ok)
+	}
+	ranked[1].Ready = false
+	if choice, ok := nextEligible(ranked, "one@example.com"); !ok || choice.Email != "one@example.com" {
+		t.Fatalf("next lost the sole ready account: %#v, %v", choice, ok)
+	}
+	ranked[0].Ready = false
+	if _, ok := nextEligible(ranked, "one@example.com"); ok {
+		t.Fatal("next accepted an unready account")
+	}
 	accounts := NewAccounts()
 	reset := time.Now().Add(time.Hour)
 	accounts.Set("one@example.com", quotaAccount("one@example.com", 0, 0, reset))
@@ -1146,10 +1158,23 @@ func TestCredentialFilesAndTransactionalRollback(t *testing.T) {
 	if backend.sets != setCount {
 		t.Fatal("reapplying the active credential rewrote the keychain")
 	}
-	for _, path := range []string{paths.OAuthToken, paths.OAuthCredentials, paths.GoogleAccounts} {
+	for _, path := range credentials.sessionFilePaths(true) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("missing %s", path)
 		}
+	}
+	if err := os.Remove(paths.OAuthToken); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentials.OAuthToken(); got != token {
+		t.Fatal("missing primary token did not fall back to Jetski token")
+	}
+	if !credentials.Apply(context.Background(), token, "user@example.com") {
+		t.Fatal("restoring primary token failed")
+	}
+	jetskiBefore, err := os.ReadFile(paths.JetskiToken)
+	if err != nil {
+		t.Fatal(err)
 	}
 	previous := backend.token
 	other := tokenBlob(t, "other@example.com", true, "r", time.Now().Add(time.Hour))
@@ -1171,6 +1196,17 @@ func TestCredentialFilesAndTransactionalRollback(t *testing.T) {
 	if backend.token != previous {
 		t.Fatal("secure credential was not rolled back")
 	}
+	if got, err := os.ReadFile(paths.JetskiToken); err != nil || !bytes.Equal(got, jetskiBefore) {
+		t.Fatalf("Jetski token was not rolled back: %v", err)
+	}
+	if !credentials.Clear(context.Background()) {
+		t.Fatal("clearing mirrored session failed")
+	}
+	for _, path := range credentials.sessionFilePaths(true) {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("session file remains after logout: %s: %v", path, err)
+		}
+	}
 }
 
 func TestCredentialApplyKeepsFileFallbackForNonPreparingBackends(t *testing.T) {
@@ -1185,7 +1221,7 @@ func TestCredentialApplyKeepsFileFallbackForNonPreparingBackends(t *testing.T) {
 	if backend.token != "" {
 		t.Fatal("failing backend unexpectedly stored a secure credential")
 	}
-	for _, path := range []string{paths.OAuthToken, paths.OAuthCredentials, paths.GoogleAccounts} {
+	for _, path := range credentials.sessionFilePaths(true) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("OAuth fallback did not create %s: %v", path, err)
 		}
