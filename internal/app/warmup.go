@@ -12,6 +12,8 @@ import (
 
 const warmupModel = "gemini-3.8-flash-low"
 
+var warmupRefetchDelay = 10 * time.Second
+
 type WarmupQuota struct {
 	RemainingFraction float64 `json:"remaining_fraction"`
 	ResetAt           string  `json:"reset_at"`
@@ -22,7 +24,7 @@ type WarmupResult struct {
 	Model     string         `json:"model"`
 	WireModel string         `json:"wire_model,omitempty"`
 	Sent      bool           `json:"sent"`
-	Verified  bool           `json:"verified"`
+	Verified  bool           `json:"verified"` // Whether the fetched 5h quota decreased.
 	Before    *WarmupQuota   `json:"before,omitempty"`
 	After     *WarmupQuota   `json:"after,omitempty"`
 	Snapshot  map[string]any `json:"quota_snapshot,omitempty"`
@@ -32,12 +34,11 @@ func (r WarmupResult) Message() string {
 	if !r.Sent {
 		return "No 'hi' sent to " + r.Account
 	}
-	if !r.Verified {
-		return "Sent 'hi' to " + r.Account + "; 5h quota decrease not verified"
+	if r.After != nil {
+		return fmt.Sprintf("✓ Sent 'hi' to %s; 5h quota remaining: %.4f%%", r.Account,
+			quotaPercent(r.After.RemainingFraction, 4))
 	}
-	// One "hi" costs ~0.0002% of the 5h bucket, so whole percents hide it.
-	return fmt.Sprintf("✓ 5h quota decreased for %s: %.4f%% → %.4f%%", r.Account,
-		quotaPercent(r.Before.RemainingFraction, 4), quotaPercent(r.After.RemainingFraction, 4))
+	return "Sent 'hi' to " + r.Account
 }
 
 func warmupFiveHour(snapshot map[string]any) (*WarmupQuota, error) {
@@ -100,13 +101,21 @@ func (a *Application) fetchWarmupQuota(ctx context.Context, accounts *Accounts, 
 	if _, err := warmupFiveHour(snapshot); err != nil {
 		return nil, err
 	}
+	if getString(snapshot, "observed_at") == "" {
+		snapshot["observed_at"] = isoTime(time.Now().UTC())
+	}
 	previous := account["quota_snapshot"]
+	previousPending, hadPending := account["warmup_quota_pending_until"]
 	account["quota_snapshot"] = snapshot
+	delete(account, "warmup_quota_pending_until")
 	if err := a.store.Save(accounts); err != nil {
 		if previous == nil {
 			delete(account, "quota_snapshot")
 		} else {
 			account["quota_snapshot"] = previous
+		}
+		if hadPending {
+			account["warmup_quota_pending_until"] = previousPending
 		}
 		return nil, fmt.Errorf("save quota: %w", err)
 	}
@@ -247,34 +256,23 @@ func (a *Application) sendGeminiWarmup(ctx context.Context, email string, automa
 		return result, err
 	}
 	result.Sent = true
-	// Keep stale 100% out of the TUI while Google's quota is propagating.
-	// This is display metadata only; selection still uses the server snapshot.
-	account["warmup_quota_pending_until"] = isoTime(time.Now().UTC().Add(5 * time.Hour))
-	if err := a.store.Save(accounts); err != nil {
-		return result, fmt.Errorf("sent 'hi', but cannot save pending quota state: %w", err)
+	if warmupRefetchDelay > 0 {
+		timer := time.NewTimer(warmupRefetchDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return result, ctx.Err()
+		}
+	} else if err := ctx.Err(); err != nil {
+		return result, err
 	}
-	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			timer := time.NewTimer(2 * time.Second)
-			select {
-			case <-timer.C:
-			case <-verifyCtx.Done():
-				timer.Stop()
-				return result, fmt.Errorf("sent 'hi', but quota verification failed: %w", verifyCtx.Err())
-			}
-		}
-		snapshot, err := a.fetchWarmupQuota(verifyCtx, accounts, account)
-		if err != nil {
-			return result, fmt.Errorf("sent 'hi', but quota verification failed: %w", err)
-		}
-		result.Snapshot = snapshot
-		result.After, _ = warmupFiveHour(snapshot)
-		if result.After.RemainingFraction < result.Before.RemainingFraction {
-			result.Verified = true
-			return result, nil
-		}
+	snapshot, err = a.fetchWarmupQuota(ctx, accounts, account)
+	if err != nil {
+		return result, fmt.Errorf("sent 'hi', but quota refetch failed: %w", err)
 	}
+	result.Snapshot = snapshot
+	result.After, _ = warmupFiveHour(snapshot)
+	result.Verified = result.After.RemainingFraction < result.Before.RemainingFraction
 	return result, nil
 }

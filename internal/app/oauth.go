@@ -315,11 +315,17 @@ func (h *HTTPService) cloudPost(ctx context.Context, access, method string, body
 }
 
 func (h *HTTPService) cloudQuotaPost(ctx context.Context, access, method string, body any) (map[string]any, error) {
-	return h.cloudPostAt(ctx, h.quotaAPI, access, method, body)
+	// Google gates Gemini weekly buckets on the CLI request identity as well
+	// as the daily endpoint. Keep generation's request identity independent.
+	return h.cloudPostAtWithUserAgent(ctx, h.quotaAPI, access, method, body, "antigravity/cli/1.4.0")
 }
 
 func (h *HTTPService) cloudPostAt(ctx context.Context, api, access, method string, body any) (map[string]any, error) {
-	result, status, err := h.jsonRequest(ctx, http.MethodPost, api+method, map[string]string{"Authorization": "Bearer " + access, "Content-Type": "application/json", "User-Agent": "antigravity"}, body, 15*time.Second, 4*1024*1024)
+	return h.cloudPostAtWithUserAgent(ctx, api, access, method, body, "antigravity")
+}
+
+func (h *HTTPService) cloudPostAtWithUserAgent(ctx context.Context, api, access, method string, body any, userAgent string) (map[string]any, error) {
+	result, status, err := h.jsonRequest(ctx, http.MethodPost, api+method, map[string]string{"Authorization": "Bearer " + access, "Content-Type": "application/json", "User-Agent": userAgent}, body, 15*time.Second, 4*1024*1024)
 	if err != nil {
 		if status != 0 {
 			return nil, fmt.Errorf("%s failed (HTTP %d)", method, status)

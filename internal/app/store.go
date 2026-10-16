@@ -267,7 +267,18 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 			if !validWindow || id == "" || bucketName == "" || !validFraction || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 || resetErr != nil {
 				return nil, fmt.Errorf("invalid quota bucket for %s", email)
 			}
+			bucketSource := cleanText(getString(bucket, "source"))
+			modelID := cleanText(getString(bucket, "model_id"))
+			if bucketSource != "" || modelID != "" {
+				if bucketSource != geminiFiveHourSource || groupID != "gemini" || window != "5h" || modelID == "" {
+					return nil, fmt.Errorf("invalid quota bucket source for %s", email)
+				}
+			}
 			normalizedBucket := map[string]any{"id": id, "name": bucketName, "window": window, "remaining_fraction": fraction, "reset_at": isoTime(reset)}
+			if bucketSource != "" {
+				normalizedBucket["source"] = bucketSource
+				normalizedBucket["model_id"] = modelID
+			}
 			if quotaBucketDisabled(bucket) {
 				normalizedBucket["disabled"] = true
 			}
@@ -286,6 +297,9 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 		groups = append(groups, normalizedGroup)
 	}
 	result := map[string]any{"observed_at": isoTime(observed), "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}
+	if getString(snapshot, "weekly_source") == geminiWeeklySource {
+		result["weekly_source"] = geminiWeeklySource
+	}
 	if warning := cleanText(getString(snapshot, "warning")); warning != "" {
 		result["warning"] = warning
 	}

@@ -208,7 +208,7 @@ func (a *Application) cmdWarmup(ctx context.Context, opts extendedOptions, posit
 		fmt.Fprintf(a.Out, "Sending 'hi' with %s for %s…\n", warmupModel, targetEmail)
 	}
 	result, warmupErr := a.SendGeminiWarmup(ctx, targetEmail)
-	if warmupErr == nil && !result.Verified {
+	if warmupErr == nil && (!result.Sent || result.After == nil) {
 		warmupErr = errors.New(result.Message())
 	}
 	if opts.JSON {

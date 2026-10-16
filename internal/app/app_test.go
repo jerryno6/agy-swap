@@ -253,7 +253,7 @@ func TestLegacyQuotaMigrationKeepsLegacyData(t *testing.T) {
 }
 
 func quotaAccount(email string, gemini, thirdParty float64, reset time.Time) Account {
-	return Account{"email": email, "name": email, "quota_snapshot": map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": "free-tier", "name": "Free"}, "groups": []any{map[string]any{"id": "gemini", "name": "Gemini Models", "buckets": []any{map[string]any{"id": "gemini-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": gemini, "reset_at": isoTime(reset)}, map[string]any{"id": "gemini-5h", "name": "5 hours", "window": "5h", "remaining_fraction": gemini, "reset_at": isoTime(reset)}}}, map[string]any{"id": "third_party", "name": "Third Party", "buckets": []any{map[string]any{"id": "3p-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": thirdParty, "reset_at": isoTime(reset)}}}}}}
+	return Account{"email": email, "name": email, "quota_snapshot": map[string]any{"observed_at": isoTime(time.Now()), "tier": map[string]any{"id": "free-tier", "name": "Free"}, "groups": []any{map[string]any{"id": "gemini", "name": "Gemini Models", "buckets": []any{map[string]any{"id": "gemini-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": gemini, "reset_at": isoTime(reset)}, map[string]any{"id": "gemini-5h", "name": "5 hours", "window": "5h", "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": gemini, "reset_at": isoTime(reset)}}}, map[string]any{"id": "third_party", "name": "Third Party", "buckets": []any{map[string]any{"id": "3p-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": thirdParty, "reset_at": isoTime(reset)}}}}}}
 }
 
 func TestAccountAvailabilityKeepsFamiliesIndependent(t *testing.T) {
@@ -745,6 +745,8 @@ func TestNextAccountSelectionPreservesUnknownAndCooldownSemantics(t *testing.T) 
 
 func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 	var oauthCalls, summaryCalls atomic.Int32
+	var catalogResponse atomic.Value
+	catalogResponse.Store(`{"tieredModelIds":{"flash":["gemini-3.8-flash-tiered"]},"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":0.92650145,"resetTime":"2030-01-02T00:00:00Z"}},"gemini-3.8-pro":{"quotaInfo":{"remainingFraction":0.01,"resetTime":"2030-01-02T00:00:00Z"}}}}`)
 	var summaryResponse atomic.Value
 	summaryResponse.Store(`{"groups":[{"displayName":"Gemini","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.4,"resetTime":"2030-01-01T00:00:00Z"},{"bucketId":"gemini-5h","displayName":"Five Hour","window":"5h","remainingFraction":0.8,"resetTime":"2030-01-01T00:00:00Z"}]},{"displayName":"Third Party","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.2,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -756,17 +758,30 @@ func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 		case "/quota/loadCodeAssist":
 			fmt.Fprint(w, `{"cloudaicompanionProject":"p","paidTier":{"id":"g1-pro-tier"}}`)
 		case "/quota/retrieveUserQuotaSummary":
+			if r.UserAgent() != "antigravity/cli/1.4.0" {
+				t.Errorf("weekly quota requires agy CLI identity, got %q", r.UserAgent())
+			}
 			summaryCalls.Add(1)
 			fmt.Fprint(w, summaryResponse.Load().(string))
+		case "/daily/loadCodeAssist":
+			fmt.Fprint(w, `{"cloudaicompanionProject":"daily-project","paidTier":{"id":"g1-pro-tier"}}`)
+		case "/daily/fetchAvailableModels":
+			if r.UserAgent() != "antigravity" {
+				t.Errorf("catalog request identity changed: %q", r.UserAgent())
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || getString(body, "project") != "daily-project" {
+				t.Errorf("catalog must use independently resolved daily project: %v", body)
+			}
+			fmt.Fprint(w, catalogResponse.Load().(string))
 		default:
-			// The daily/model endpoint is deliberately separate from quota.
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 	httpService := NewHTTPService(io.Discard)
-	if httpService.quotaAPI != "https://cloudcode-pa.googleapis.com/v1internal:" || httpService.cloudAPI != cloudCodeAPI {
-		t.Fatal("quota must use production separately from generation/catalog")
+	if httpService.quotaAPI != cloudCodeAPI || httpService.cloudAPI != cloudCodeAPI {
+		t.Fatal("quota must use the same daily backend as agy")
 	}
 	httpService.oauthURL = server.URL + "/oauth"
 	httpService.cloudAPI = server.URL + "/daily/"
@@ -786,8 +801,11 @@ func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 		t.Fatalf("groups = %#v", groups)
 	}
 	account["quota_snapshot"] = snapshot
-	if weekly, fiveHour, found := geminiQuotaBuckets(account); !found || weekly.fraction != .4 || fiveHour.fraction != .8 {
-		t.Fatalf("production windows not routed into legacy quota pipeline: %+v %+v", weekly, fiveHour)
+	if getString(snapshot, "weekly_source") != geminiWeeklySource {
+		t.Fatal("weekly source missing from normalized snapshot")
+	}
+	if weekly, fiveHour, found := geminiQuotaBuckets(account); !found || weekly.fraction != .4 || fiveHour.fraction != .92650145 || !fiveHour.resetAt.Equal(time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("weekly CLI summary and selected daily model quota were not combined: %+v %+v", weekly, fiveHour)
 	}
 
 	// A disabled 5h fraction of 1 is not usable capacity after weekly exhaustion.
@@ -807,6 +825,19 @@ func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	account = loaded.ByEmail["user@example.com"]
+	// A recently cached production weekly balance must not survive the fix's TTL.
+	delete(getMap(account["quota_snapshot"]), "weekly_source")
+	beforeMigration := summaryCalls.Load()
+	if failures := quota.Refresh(context.Background(), loaded, false, nil); len(failures) != 0 || summaryCalls.Load() <= beforeMigration {
+		t.Fatalf("pre-fix weekly cache was reused: %v", failures)
+	}
+	if getString(getMap(account["quota_snapshot"]), "weekly_source") != geminiWeeklySource {
+		t.Fatal("weekly source was lost when refreshing and persisting the cache")
+	}
+
+	if !hasCurrentGeminiFiveHour(getMap(account["quota_snapshot"])) {
+		t.Fatal("daily quota provenance was lost on persistence")
+	}
 	_, fiveHour, _ := geminiQuotaBuckets(account)
 	if !fiveHour.disabled || fiveHour.description != "You have hit your weekly limit" {
 		t.Fatalf("disabled metadata lost on persistence: %+v", fiveHour)
@@ -852,12 +883,28 @@ func TestQuotaFetchRoutesGroupsAndReusesAccessToken(t *testing.T) {
 	account["quota_snapshot"] = legacySnapshot
 	before := summaryCalls.Load()
 	if failures := quota.Refresh(context.Background(), loaded, false, nil); len(failures) != 0 || summaryCalls.Load() <= before || !hasGeminiQuota(quotaGroups(account)) {
-		t.Fatalf("legacy model cache skipped production refresh: %v", failures)
+		t.Fatalf("legacy model cache skipped combined quota refresh: %v", failures)
 	}
 	previous := account["quota_snapshot"]
+	validCatalog := catalogResponse.Load().(string)
+	for _, invalid := range []string{
+		`{"models":{"gemini-3.8-pro":{"quotaInfo":{"remainingFraction":0.1,"resetTime":"2030-01-01T00:00:00Z"}}}}`,
+		`{"tieredModelIds":{"flash":["gemini-4-flash-tiered"]},"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":0.1,"resetTime":"2030-01-01T00:00:00Z"}}}}`,
+		`{"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":1.1,"resetTime":"2030-01-01T00:00:00Z"}}}}`,
+		`{"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":0.1,"resetTime":"invalid"}}}}`,
+	} {
+		catalogResponse.Store(invalid)
+		if failures := quota.Refresh(context.Background(), loaded, true, nil); failures["user@example.com"] == "" {
+			t.Fatal("invalid or unavailable selected model quota must fail refresh")
+		}
+		if !reflect.DeepEqual(account["quota_snapshot"], previous) {
+			t.Fatal("invalid daily model quota replaced cached snapshot")
+		}
+	}
+	catalogResponse.Store(validCatalog)
 	summaryResponse.Store(`{"groups":[{"displayName":"Third Party","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.2,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
 	if failures := quota.Refresh(context.Background(), loaded, true, nil); failures["user@example.com"] == "" {
-		t.Fatal("missing production Gemini must fail rather than substitute model catalog")
+		t.Fatal("missing daily Gemini weekly must fail rather than substitute model catalog")
 	}
 	if !reflect.DeepEqual(account["quota_snapshot"], previous) {
 		t.Fatal("failed refresh replaced usable timed-window snapshot")
@@ -870,6 +917,8 @@ func TestQuotaRefreshIsConcurrentAndKeepsCachedFailure(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "loadCodeAssist") {
 			fmt.Fprint(w, `{"cloudaicompanionProject":"p","currentTier":{"id":"free-tier"}}`)
+		} else if strings.Contains(r.URL.Path, "fetchAvailableModels") {
+			fmt.Fprint(w, `{"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2030-01-01T00:00:00Z"}}}}`)
 		} else {
 			fmt.Fprint(w, `{"groups":[{"buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.5,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
 		}
@@ -935,6 +984,8 @@ func TestQuotaRefreshPersistsTokenHash(t *testing.T) {
 			fmt.Fprint(w, `{"access_token":"refreshed-access","refresh_token":"r2","expires_in":3600,"token_type":"Bearer"}`)
 		case strings.Contains(r.URL.Path, "loadCodeAssist"):
 			fmt.Fprint(w, `{"cloudaicompanionProject":"p","currentTier":{"id":"free-tier"}}`)
+		case strings.Contains(r.URL.Path, "fetchAvailableModels"):
+			fmt.Fprint(w, `{"models":{"gemini-3.8-flash-tiered":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2030-01-01T00:00:00Z"}}}}`)
 		default:
 			fmt.Fprint(w, `{"groups":[{"buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly","window":"weekly","remainingFraction":0.5,"resetTime":"2030-01-01T00:00:00Z"}]}]}`)
 		}

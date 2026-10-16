@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.20
+
+- Quota: read Gemini weekly usage from the daily endpoint with the agy CLI User-Agent; invalidate cached weekly balances from the old request identity.
+- Warm-up: freeze P1/P2 before auto-next, wait ten seconds after sending hi, then persist and render each account's live quota without hiding unchanged percentages.
+
 ## 3.1.19
 
 - Sessions: synchronize the standalone Jetski OAuth token across switching, login rollback and logout while preserving custom secure-store verification.

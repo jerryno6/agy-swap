@@ -45,7 +45,7 @@ Requirements: Go 1.27.2 or later. macOS source builds require Xcode Command Line
 ```bash
 git clone https://github.com/aklkbqx/agy-swap.git
 cd agy-swap
-go build -trimpath -ldflags "-s -w -X main.version=3.1.19 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
+go build -trimpath -ldflags "-s -w -X main.version=3.1.20 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
 ./agy-swap version
 ```
 
@@ -175,7 +175,7 @@ agy-swap warmup --account dev@company.com --json
 
 In the TUI, press `w` on the selected account. Warm-up sends at most one `hi`, then reads live quota up to three times within 15 seconds. It reports success only when the Gemini 5h remaining fraction decreases; unchanged quota, blocked replies, and verification failures never trigger another prompt. Reset times and percentages always come from Google. The command returns exit code 1 if the decrease cannot be verified. JSON output includes `sent`, `verified`, quota before/after, and the latest saved snapshot.
 
-The TUI focuses on Gemini 3.8 High and uses Gemini group limits from the production Code Assist quota endpoint. HEALTH retains the weekly percentage/reset and five-hour percentage/reset format; account details show Weekly Limit before Five Hour Limit. A server-disabled window appears as `off` in HEALTH and `Disabled` in details, and does not count as available quota. Auto-next and warm-up use the existing ranking and threshold logic with active timed windows. Generation and model discovery retain their existing endpoint. If Gemini quota cannot be fetched, the previous snapshot is retained; model-catalog percentages are never substituted for weekly/5h limits.
+The TUI focuses on Gemini 3.8 Flash (High). Weekly Gemini quota comes from the daily Code Assist quota summary with the agy CLI User-Agent; five-hour remaining quota and reset time come from the matching Gemini 3.8 model quota in the daily endpoint catalog, using the server tiered-model mapping. Production five-hour values are not used as a fallback. HEALTH retains the weekly percentage/reset and five-hour percentage/reset format; account details show Weekly Limit before Five Hour Limit. Server-disabled windows remain unavailable for automatic selection and warm-up. Fetch or persistence failures retain the previous snapshot and report a refresh error. Legacy five-hour and pre-fix weekly snapshots bypass cache TTL and cannot authorize automatic actions until refreshed. Ranking formulas, thresholds and generation requests are unchanged.
 
 The model is resolved from the account's Code Assist catalog: `gemini-3.8-flash-low`, or the advertised `gemini-3.8-flash-tiered` with `thinkingLevel: LOW`. No other model version is substituted. JSON records the actual API ID in `wire_model`.
 

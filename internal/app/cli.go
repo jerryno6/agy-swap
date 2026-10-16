@@ -690,7 +690,7 @@ func (a *Application) cmdList(ctx context.Context, args cliArgs) int {
 		hasLimits = hasLimits || len(activeLimits(account, now)) > 0
 	}
 	if hasQuota {
-		fmt.Fprintf(a.Out, "%sQuota comes from Google; weekly/5h windows use the production quota summary.%s\n", a.p.Gray, a.p.Reset)
+		fmt.Fprintf(a.Out, "%sQuota comes from Google; weekly quota uses the daily CLI summary; Gemini 5h uses the daily model catalog.%s\n", a.p.Gray, a.p.Reset)
 	} else if hasLimits {
 		fmt.Fprintf(a.Out, "%sGoogle usage unavailable; cooldown bars below come from recent local errors.%s\n", a.p.Gray, a.p.Reset)
 	}

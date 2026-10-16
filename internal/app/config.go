@@ -19,7 +19,7 @@ const (
 	quotaCache       = 300 * time.Second
 	tuiAutoRefresh   = 300 * time.Second
 	cloudCodeAPI     = "https://daily-cloudcode-pa.googleapis.com/v1internal:"
-	cloudQuotaAPI    = "https://cloudcode-pa.googleapis.com/v1internal:"
+	cloudQuotaAPI    = cloudCodeAPI
 	oauthTokenURL    = "https://oauth2.googleapis.com/token"
 	githubRepo       = "aklkbqx/agy-swap"
 )

@@ -69,7 +69,30 @@ type tuiAnimation struct {
 
 const tuiToastDuration = 3 * time.Second
 
+type tuiAutoCycleState struct {
+	revision     uint64
+	phase        string // "resolving", "frozen", "warming"
+	sessionToken string
+	secureToken  string
+	oauthToken   string
+	synced       map[string]bool
+	quotaErrors  map[string]string
+	targets      []string
+}
+
+func copyQuotaErrors(src map[string]string) map[string]string {
+	if src == nil {
+		return map[string]string{}
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 type tuiState struct {
+	autoCycle      *tuiAutoCycleState
 	accounts       *Accounts
 	current        string
 	active         string

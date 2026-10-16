@@ -5,6 +5,9 @@ import "time"
 // fullGeminiFiveHour requires every explicit Gemini 5h bucket to be exactly
 // full. Do not use display rounding or the legacy daily-window aliases here.
 func fullGeminiFiveHour(snapshot map[string]any) bool {
+	if hasLegacyGeminiFiveHour(snapshot) {
+		return false
+	}
 	found := false
 	for _, rawGroup := range getSlice(snapshot["groups"]) {
 		group := getMap(rawGroup)
@@ -30,17 +33,6 @@ func fullGeminiFiveHour(snapshot map[string]any) bool {
 	return found
 }
 
-// Pending is only a presentation state: never invent a quota decrease. A live
-// decrease or expiration of the warmed window restores the server percentage.
-func warmupQuotaPending(account Account, now time.Time) bool {
-	until, err := parseUTC(getString(account, "warmup_quota_pending_until"))
-	if err != nil || !now.Before(until) {
-		return false
-	}
-	quota, err := warmupFiveHour(getMap(account["quota_snapshot"]))
-	return err == nil && quota.RemainingFraction == 1
-}
-
 func autoWarmupReady(account Account, now time.Time) bool {
 	if !isSnapshotFresh(account, now) || !fullGeminiFiveHour(getMap(account["quota_snapshot"])) {
 		return false
@@ -60,6 +52,9 @@ func autoWarmupReady(account Account, now time.Time) bool {
 // Freeze P=1 and P=2 before applying warm-up checks: an ineligible top account
 // must never be replaced by P=3. The synced set excludes cache hits and failures.
 func tuiAutoWarmupTargets(state *tuiState, synced map[string]bool, now time.Time) []string {
+	if state == nil || state.accounts == nil {
+		return nil
+	}
 	ranks := tuiAutoNextRanks(state, now)
 	top := [2]string{}
 	for email, rank := range ranks {
@@ -69,7 +64,7 @@ func tuiAutoWarmupTargets(state *tuiState, synced map[string]bool, now time.Time
 	}
 	var targets []string
 	for _, email := range top {
-		if email != "" && synced[email] && autoWarmupReady(state.accounts.ByEmail[email], now) {
+		if email != "" && synced != nil && synced[email] && autoWarmupReady(state.accounts.ByEmail[email], now) {
 			targets = append(targets, email)
 		}
 	}

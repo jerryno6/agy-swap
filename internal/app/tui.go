@@ -33,6 +33,7 @@ type tuiResizeEvent struct{ width, height int }
 type tuiWarmupQuotaEvent struct{ revision uint64 }
 type tuiJobEvent struct {
 	warmup        *WarmupResult
+	warmupErrors  map[string]string
 	id            uint64
 	kind          string
 	message       string
@@ -43,6 +44,7 @@ type tuiJobEvent struct {
 
 type tuiJobResult struct {
 	warmup        *WarmupResult
+	warmupErrors  map[string]string
 	message       string
 	err           error
 	doctorChecks  []doctorCheck
@@ -179,7 +181,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	refreshQueuedAuto := false
 	var refreshRevision uint64
 	startRefresh := func(force, automatic bool) {
-		if warmupRunning {
+		if warmupRunning || state.autoCycle != nil {
 			refreshQueued = true
 			refreshQueuedAuto = refreshQueuedAuto || automatic
 			return
@@ -187,6 +189,8 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		if refreshing {
 			return
 		}
+		state.autoCycle = nil
+		refreshQueued, refreshQueuedAuto = false, false
 		refreshRevision++
 		revision := refreshRevision
 		sessionToken := current
@@ -234,6 +238,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		refreshRevision++
 		refreshing = false
 		state.refreshing = false
+		state.autoCycle = nil
 	}
 
 	var frameTimer *time.Timer
@@ -341,7 +346,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 		go func() {
 			result := work(workerCtx)
 			select {
-			case events <- tuiJobEvent{id: id, kind: kind, warmup: result.warmup, message: result.message, err: result.err, doctorChecks: result.doctorChecks, doctorHealthy: result.doctorHealthy}:
+			case events <- tuiJobEvent{id: id, kind: kind, warmup: result.warmup, warmupErrors: result.warmupErrors, message: result.message, err: result.err, doctorChecks: result.doctorChecks, doctorHealthy: result.doctorHealthy}:
 			case <-workerCtx.Done():
 			}
 		}()
@@ -578,6 +583,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 	}
 
 	beginWarmup := func(email string) {
+		state.autoCycle = nil
 		warmupRunning = true
 		invalidateRefresh()
 		startJob("warmup", "Sending one 'hi' with "+warmupModel+" for "+email+"…", func(jobCtx context.Context) tuiJobResult {
@@ -585,13 +591,17 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 			return tuiJobResult{warmup: &result, message: result.Message(), err: err}
 		})
 	}
-	beginAutoWarmup := func(targets []string) {
+	beginAutoWarmup := func(cycle *tuiAutoCycleState) {
 		warmupRunning = true
 		invalidateRefresh()
-		revision := refreshRevision
+		cycleRevision := refreshRevision
+		cycle.revision = cycleRevision
+		state.autoCycle = cycle
+		targets := append([]string(nil), cycle.targets...)
 		startJob("auto-warmup", "Warming up next accounts…", func(jobCtx context.Context) tuiJobResult {
 			var messages []string
 			var failures []string
+			warmupErrors := make(map[string]string)
 			for _, email := range targets {
 				if err := jobCtx.Err(); err != nil {
 					failures = append(failures, err.Error())
@@ -601,24 +611,80 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				// Each account has already persisted its latest live quota. Repaint
 				// it without waiting for the next account's verification requests.
 				select {
-				case events <- tuiWarmupQuotaEvent{revision: revision}:
+				case events <- tuiWarmupQuotaEvent{revision: cycleRevision}:
 				case <-jobCtx.Done():
 					return tuiJobResult{err: jobCtx.Err()}
 				}
 				if err != nil {
 					failures = append(failures, email+": "+err.Error())
-				} else if result.Sent && !result.Verified {
-					failures = append(failures, result.Message())
-				} else {
+					warmupErrors[email] = err.Error()
+				} else if result.Sent {
 					messages = append(messages, result.Message())
 				}
 			}
 			message := strings.Join(messages, "; ")
 			if len(failures) > 0 {
-				return tuiJobResult{message: message, err: fmt.Errorf("auto warm-up: %s", strings.Join(append(messages, failures...), "; "))}
+				return tuiJobResult{
+					message:      message,
+					warmupErrors: warmupErrors,
+					err:          fmt.Errorf("auto warm-up: %s", strings.Join(append(messages, failures...), "; ")),
+				}
 			}
-			return tuiJobResult{message: message}
+			return tuiJobResult{message: message, warmupErrors: warmupErrors}
 		})
+	}
+	finishAutoCycle := func(cycle *tuiAutoCycleState) {
+		state.autoCycle = nil
+		defer func() {
+			if refreshQueued && !refreshing && !warmupRunning {
+				automatic := refreshQueuedAuto
+				startRefresh(true, automatic)
+			}
+		}()
+		if cycle == nil || cycle.revision != refreshRevision {
+			return
+		}
+		// A completed old batch must not switch a newer manual/external session.
+		if cycle.sessionToken != current || a.credentials.Current(ctx) != current ||
+			a.credentials.Secure(ctx) != cycle.secureToken || a.credentials.OAuthToken() != cycle.oauthToken {
+			return
+		}
+		a.renderTUI(state, outFile)
+		event := tuiAccountsEvent{
+			accounts: state.accounts, quotaErrors: cycle.quotaErrors, revision: cycle.revision,
+			sessionToken: cycle.sessionToken, secureToken: cycle.secureToken, oauthToken: cycle.oauthToken,
+		}
+		current = a.handleAutoNext(ctx, state, event, current, refreshRevision, time.Now().UTC())
+		if state.autoNextRetryRequested {
+			state.autoNextRetryRequested = false
+			current = a.credentials.Current(ctx)
+			state.current = current
+			state.active = a.activeHint(state.accounts, current)
+			startActiveResolve()
+			startRefresh(true, true)
+		}
+	}
+	runAutoCycle := func(cycle *tuiAutoCycleState) {
+		if cycle == nil || cycle.revision != refreshRevision {
+			state.autoCycle = nil
+			return
+		}
+		if freshSettings, err := a.loadSettings(); err == nil {
+			state.settings = freshSettings
+			state.settingsLoaded = true
+		} else {
+			state.autoCycle = nil
+			state.message, state.messageType = "Cannot load settings: "+err.Error(), "error"
+			return
+		}
+		// Select exactly the two visible priority accounts once, before any switch.
+		cycle.targets = tuiAutoWarmupTargets(state, cycle.synced, time.Now().UTC())
+		if len(cycle.targets) == 0 {
+			finishAutoCycle(cycle)
+			return
+		}
+		cycle.phase = "warming"
+		beginAutoWarmup(cycle)
 	}
 	performWarmup := func() {
 		if warmupRunning || (state.job != nil && !state.job.Done) {
@@ -876,6 +942,7 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				a.renderTUI(state, outFile)
 			}
 			if newToken != current {
+				state.autoCycle = nil
 				current = newToken
 				state.current = current
 				state.active = a.activeHint(state.accounts, current)
@@ -910,6 +977,16 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				}
 				refreshing = false
 				state.refreshing = false
+				if hasQuotaError(value.quotaErrors, "store") || hasQuotaError(value.quotaErrors, "storage") {
+					// Refresh may have mutated its working copy before persistence failed.
+					// Render the committed cache and never warm or switch from that copy.
+					if fresh, err := a.store.Load(false); err == nil {
+						value.accounts = fresh
+					} else {
+						value.accounts = nil
+					}
+					value.synced = nil
+				}
 				state.updateRecentQuotaChanges(value.accounts)
 				state.setAccounts(value.accounts)
 				state.quotaErrors = value.quotaErrors
@@ -924,25 +1001,44 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				if pendingWarmup != "" {
 					email := pendingWarmup
 					pendingWarmup = ""
+					state.autoCycle = nil
 					beginWarmup(email)
+				} else if !value.autoWarmup {
+					state.autoCycle = nil
+					sessionStable := value.sessionToken == current && a.credentials.Current(ctx) == current &&
+						a.credentials.Secure(ctx) == value.secureToken && a.credentials.OAuthToken() == value.oauthToken
+					if sessionStable {
+						current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
+						if state.autoNextRetryRequested {
+							state.autoNextRetryRequested = false
+							current = a.credentials.Current(ctx)
+							state.current = current
+							state.active = a.activeHint(state.accounts, current)
+							startActiveResolve()
+							startRefresh(true, true)
+						}
+					}
 				} else {
 					sessionStable := value.sessionToken == current && a.credentials.Current(ctx) == current &&
 						a.credentials.Secure(ctx) == value.secureToken && a.credentials.OAuthToken() == value.oauthToken
-					current = a.handleAutoNext(ctx, state, value, current, refreshRevision, time.Now().UTC())
-					if state.autoNextRetryRequested {
-						// The session changed under us: re-evaluate now against the session
-						// agy really uses instead of waiting a whole interval.
-						state.autoNextRetryRequested = false
-						current = a.credentials.Current(ctx)
-						state.current = current
-						state.active = a.activeHint(state.accounts, current)
-						startActiveResolve()
-						startRefresh(true, true)
-					} else if value.autoWarmup && sessionStable && !a.demo && !refreshing && !warmupRunning &&
-						state.mode == tuiBrowse && state.form == nil && state.resolvingToken == "" &&
-						(state.job == nil || state.job.Done) {
-						if targets := tuiAutoWarmupTargets(state, value.synced, time.Now().UTC()); len(targets) > 0 {
-							beginAutoWarmup(targets)
+					if !sessionStable || a.demo || refreshing || warmupRunning ||
+						state.mode != tuiBrowse || state.form != nil || (state.job != nil && !state.job.Done) {
+						state.autoCycle = nil
+					} else {
+						cycle := &tuiAutoCycleState{
+							revision:     value.revision,
+							phase:        "frozen",
+							sessionToken: value.sessionToken,
+							secureToken:  value.secureToken,
+							oauthToken:   value.oauthToken,
+							synced:       value.synced,
+							quotaErrors:  copyQuotaErrors(value.quotaErrors),
+						}
+						state.autoCycle = cycle
+						if state.resolvingToken != "" {
+							cycle.phase = "resolving"
+						} else {
+							runAutoCycle(cycle)
 						}
 					}
 				}
@@ -964,6 +1060,25 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 			case tuiActiveEvent:
 				if value.token == current {
 					state.active, state.resolvingToken = value.email, ""
+					if state.autoCycle != nil && state.autoCycle.phase == "resolving" &&
+						state.autoCycle.revision == refreshRevision {
+						cycle := state.autoCycle
+						sessionStable := cycle.sessionToken == current &&
+							a.credentials.Current(ctx) == current &&
+							a.credentials.Secure(ctx) == cycle.secureToken &&
+							a.credentials.OAuthToken() == cycle.oauthToken
+						if sessionStable && !a.demo && !refreshing && !warmupRunning &&
+							state.mode == tuiBrowse && state.form == nil &&
+							(state.job == nil || state.job.Done) {
+							cycle.phase = "frozen"
+							runAutoCycle(cycle)
+						} else {
+							state.autoCycle = nil
+						}
+					}
+					if state.autoCycle == nil && refreshQueued && !refreshing && !warmupRunning {
+						startRefresh(true, refreshQueuedAuto)
+					}
 					a.renderTUI(state, outFile)
 				}
 			case tuiResizeEvent:
@@ -998,17 +1113,27 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				}
 				if value.kind == "warmup" || value.kind == "auto-warmup" {
 					warmupRunning = false
+					var accountsLoaded bool
 					if value.warmup != nil || value.kind == "auto-warmup" {
 						fresh, loadErr := a.store.Load(false)
 						if loadErr == nil {
+							accountsLoaded = true
 							state.updateRecentQuotaChanges(fresh)
 							state.setAccounts(fresh)
 						} else {
 							state.message, state.messageType = "Cannot reload accounts after warm-up: "+loadErr.Error(), "error"
 						}
-						if value.err == nil && value.warmup != nil && !value.warmup.Verified && loadErr == nil {
-							state.messageType = "info"
-							state.beginAnimation("refresh", 360*time.Millisecond)
+					}
+					if value.kind == "auto-warmup" {
+						cycle := state.autoCycle
+						if cycle != nil && cycle.revision == refreshRevision && accountsLoaded {
+							for email, errStr := range value.warmupErrors {
+								cycle.quotaErrors[email] = errStr
+							}
+							state.quotaErrors = cycle.quotaErrors
+							finishAutoCycle(cycle)
+						} else {
+							state.autoCycle = nil
 						}
 					}
 					if refreshQueued {
@@ -1016,10 +1141,6 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 						automatic := refreshQueuedAuto
 						refreshQueuedAuto = false
 						startRefresh(true, automatic)
-					} else {
-						// Bypass the cache after generation, without triggering another
-						// warm-up cycle. Verification may precede quota propagation.
-						startRefresh(true, false)
 					}
 				}
 				a.renderTUI(state, outFile)

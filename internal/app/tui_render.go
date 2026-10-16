@@ -898,12 +898,11 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 	weekly, fiveHour, _ := geminiQuotaBuckets(account)
 	valueWidth := maxInt(8, width-labelWidth-3)
 	for _, item := range []struct {
-		label  string
-		quota  geminiBucketQuota
-		window string
+		label string
+		quota geminiBucketQuota
 	}{
-		{"Weekly Limit", weekly, "weekly"},
-		{"Five Hour Limit", fiveHour, "5h"},
+		{"Weekly Limit", weekly},
+		{"Five Hour Limit", fiveHour},
 	} {
 		value := "Unavailable"
 		if item.quota.disabled {
@@ -914,9 +913,6 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 		} else if item.quota.found {
 			bucket := map[string]any{"remaining_fraction": item.quota.fraction, "reset_at": isoTime(item.quota.resetAt)}
 			value = formatQuotaBarResponsive(bucket, a.p, now, tuiQuotaBarWidth(valueWidth), valueWidth)
-		}
-		if item.window == "5h" && warmupQuotaPending(account, now) {
-			value = "Syncing after warm-up"
 		}
 		rows = append(rows, tuiDetailKV(item.label, value, width, labelWidth, a.p))
 	}
@@ -973,9 +969,6 @@ func accountHealthCompact(account Account, now time.Time) string {
 }
 
 func accountHealthCompactForGroups(account Account, groups []quotaGroupHealth, now time.Time) string {
-	if warmupQuotaPending(account, now) {
-		return "5h syncing"
-	}
 	if best, ok := bestAvailableQuotaGroup(groups); ok {
 		return fmt.Sprintf("%s %.0f%% ready", best.label, quotaPercent(best.fraction, 0))
 	}

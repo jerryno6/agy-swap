@@ -243,6 +243,7 @@ type geminiBucketQuota struct {
 }
 
 func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found bool) {
+	dailyPriority := -1
 	groups := quotaGroups(account)
 	for _, rawGroup := range groups {
 		group := getMap(rawGroup)
@@ -269,6 +270,17 @@ func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found
 				found = true
 			} else if window == "5h" || strings.Contains(id, "5h") || strings.Contains(window, "5h") ||
 				window == "daily" || strings.Contains(id, "daily") || strings.Contains(window, "day") {
+				priority := 0
+				if window == "5h" {
+					priority = 1
+					if getString(bucket, "source") == geminiFiveHourSource && cleanText(getString(bucket, "model_id")) != "" {
+						priority = 2
+					}
+				}
+				if priority < dailyPriority {
+					continue
+				}
+				dailyPriority = priority
 				daily.disabled = quotaBucketDisabled(bucket)
 				daily.description = getString(bucket, "description")
 				daily.fraction = fraction
@@ -386,9 +398,6 @@ func accountGeminiHealth(account Account, now time.Time) (string, tuiHealthTone)
 	}
 	if daily.disabled {
 		dailyPct = " off"
-	}
-	if warmupQuotaPending(account, now) {
-		dailyPct, dailyResetStr = "sync", "pending"
 	}
 	health := fmt.Sprintf("%s %s - %s %s", weeklyPct, weeklyResetStr, dailyPct, dailyResetStr)
 

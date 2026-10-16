@@ -11,7 +11,7 @@ func autoNextQuotaAccount(email string, now time.Time, weekly, fiveHour float64,
 		"observed_at": isoTime(now),
 		"groups": []any{map[string]any{"id": "gemini", "buckets": []any{
 			map[string]any{"window": "weekly", "remaining_fraction": weekly, "reset_at": isoTime(now.Add(weeklyReset))},
-			map[string]any{"window": "5h", "remaining_fraction": fiveHour, "reset_at": isoTime(now.Add(fiveHourReset))},
+			map[string]any{"window": "5h", "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": fiveHour, "reset_at": isoTime(now.Add(fiveHourReset))},
 		}}},
 	}}
 }
@@ -265,9 +265,9 @@ func TestAutoNextMissingWindowsAndMalformedBuckets(t *testing.T) {
 				group := getMap(getSlice(getMap(a["quota_snapshot"])["groups"])[0])
 				group["buckets"] = []any{bucket,
 					map[string]any{"window": "unknown", "remaining_fraction": 0.0, "reset_at": isoTime(now.Add(-time.Hour))},
-					map[string]any{"window": window, "remaining_fraction": 1.1, "reset_at": isoTime(now.Add(time.Minute))},
+					map[string]any{"window": window, "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": 1.1, "reset_at": isoTime(now.Add(time.Minute))},
 					map[string]any{"window": "weekly", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
-					map[string]any{"window": "5h", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
+					map[string]any{"window": "5h", "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
 				}
 				accounts.Set(email, a)
 			}

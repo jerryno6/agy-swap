@@ -63,6 +63,26 @@ func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThres
 	return CheckAutoNextThresholdWithLimits(account, now, AutoNextWeeklyThreshold, AutoNext5hThreshold)
 }
 
+// hasLegacyGeminiFiveHour rejects production and pre-migration 5h data while
+// leaving weekly-only snapshots usable. Mixed legacy/canonical buckets also
+// fail closed so automation cannot accidentally rank by the wrong window.
+func hasLegacyGeminiFiveHour(snapshot map[string]any) bool {
+	for _, rawGroup := range getSlice(snapshot["groups"]) {
+		group := getMap(rawGroup)
+		if !quotaFamilyMatches(strings.ToLower(cleanText(getString(group, "id"))), selectionQuotaFamily) {
+			continue
+		}
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			if strings.ToLower(strings.TrimSpace(getString(bucket, "window"))) == "5h" &&
+				(getString(bucket, "source") != geminiFiveHourSource || strings.TrimSpace(getString(bucket, "model_id")) == "") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CheckAutoNextThresholdWithLimits evaluates whether an account's quota has dropped strictly below the
 // configured auto-next thresholds.
 //
@@ -80,7 +100,7 @@ func CheckAutoNextThresholdWithLimits(account Account, now time.Time, weeklyThre
 		return false, res
 	}
 	snapshot := getMap(account["quota_snapshot"])
-	if snapshot == nil {
+	if snapshot == nil || hasLegacyGeminiFiveHour(snapshot) {
 		return false, res
 	}
 	observedStr := getString(snapshot, "observed_at")
@@ -178,7 +198,7 @@ func isSnapshotFresh(account Account, now time.Time) bool {
 		return false
 	}
 	snapshot := getMap(account["quota_snapshot"])
-	if snapshot == nil {
+	if snapshot == nil || hasLegacyGeminiFiveHour(snapshot) {
 		return false
 	}
 	observedStr := getString(snapshot, "observed_at")
