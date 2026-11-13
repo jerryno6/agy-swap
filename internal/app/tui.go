@@ -834,6 +834,23 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 			suspend(func() int { return a.addLoginFlow(ctx) })
 		case "switch-account":
 			performSwitch()
+		case "copy-token":
+			if state.view != tuiViewDashboard && state.view != tuiViewQuota {
+				return
+			}
+			if state.job != nil && !state.job.Done {
+				state.showToast("Wait for the current action to finish", "info")
+				return
+			}
+			email, _, ok := state.selectedAccount()
+			if !ok {
+				state.showToast("No account selected", "info")
+				return
+			}
+			startJob("copy-token", "Copying token for "+email, func(jobCtx context.Context) tuiJobResult {
+				err := a.copyAccountToken(jobCtx, email)
+				return tuiJobResult{message: "Copied token for " + email, err: err}
+			})
 		case "next-account":
 			suspend(func() int { return a.cmdNext(ctx, cliArgs{}) })
 		case "refresh":
@@ -1101,6 +1118,9 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 				}
 				if value.kind == "doctor" {
 					state.doctorChecks, state.doctorHealthy = value.doctorChecks, value.doctorHealthy
+				}
+				if value.kind == "copy-token" {
+					state.showToast(state.message, state.messageType)
 				}
 				if value.kind == "backup-import" && value.err == nil {
 					fresh, loadErr := a.store.Load(false)
@@ -1587,6 +1607,8 @@ func (a *Application) cmdInteractive(ctx context.Context) int {
 					} else if state.view == tuiViewHistory && len(state.history) > 0 {
 						beginConfirmAction("history-clear", "Clear local history")
 					}
+				case "y":
+					runAction("copy-token")
 				case "m":
 					suspend(func() int { return a.cmdAccount(ctx, extendedOptions{Force: true}, []string{"migrate"}) })
 				case "u":

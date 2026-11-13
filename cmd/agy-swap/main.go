@@ -7,7 +7,7 @@ import (
 	"github.com/aklkbqx/agy-swap/internal/app"
 )
 
-var version = "3.1.20"
+var version = "3.1.21"
 var buildID = "dev"
 
 func main() {

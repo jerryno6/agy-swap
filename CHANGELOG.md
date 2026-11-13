@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.21
+
+- TUI: press `y` in Dashboard / Quota or use Actions to copy the selected account's full saved OAuth token JSON without refreshing credentials or switching the active session.
+- Clipboard: support macOS, Windows PowerShell, and Linux desktop helpers with timeouts and errors that do not expose tokens; disable copying in demo mode.
+
 ## 3.1.20
 
 - Quota: read Gemini weekly usage from the daily endpoint with the agy CLI User-Agent; invalidate cached weekly balances from the old request identity.

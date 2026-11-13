@@ -1089,13 +1089,15 @@ func formatKeycaps(p palette, pairs ...string) string {
 
 func (a *Application) tuiFooterLines(state *tuiState, width int) []string {
 	g := newTUIGeometry(width, 12)
-	footer := formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
+	footer := formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[y]", "Copy token", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 	if state.view == tuiViewDashboard && g.layout == tuiLayoutWide {
-		footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[w]", "Warmup", "[[]/[]]", "Resize", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
+		footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[y]", "Copy token", "[w]", "Warmup", "[[]/[]]", "Resize", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 	}
 	if state.view != tuiViewDashboard {
 		footer = formatKeycaps(a.p, "[↑↓]", "Navigate", "[Enter]", "Edit", "[Esc]", "Dashboard", "[^K]", "Actions", "[?]", "Help", "[q]", "Quit")
 		switch state.view {
+		case tuiViewQuota:
+			footer = formatKeycaps(a.p, "[↑↓]", "Move", "[Enter]", "Switch", "[y]", "Copy token", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewBackup:
 			footer = formatKeycaps(a.p, "[x]", "Export", "[i]", "Import", "[v]", "Verify", "[Esc]", "Dashboard", "[^K]", "Actions", "[q]", "Quit")
 		case tuiViewHistory:
@@ -1136,6 +1138,7 @@ func (a *Application) tuiHelpLines(width int) []string {
 		"↑ ↓ / j k   Move through accounts",
 		"[ ] / + -   Resize accounts split (drag or = resets)",
 		"Enter       Switch selected account",
+		"y           Copy selected account token JSON",
 		"/           Search by name or email",
 		"Ctrl-K / :  Open action palette",
 		"p h s o b   Profiles, history, settings, doctor, backup",

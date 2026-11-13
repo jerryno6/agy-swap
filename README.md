@@ -45,7 +45,7 @@ Requirements: Go 1.27.2 or later. macOS source builds require Xcode Command Line
 ```bash
 git clone https://github.com/aklkbqx/agy-swap.git
 cd agy-swap
-go build -trimpath -ldflags "-s -w -X main.version=3.1.20 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
+go build -trimpath -ldflags "-s -w -X main.version=3.1.21 -X main.buildID=local" -o agy-swap ./cmd/agy-swap
 ./agy-swap version
 ```
 
@@ -85,6 +85,7 @@ The layout follows your terminal size:
 | `[` / `]` or `<` / `>` | Narrow or widen the account pane in wide layout |
 | `=` | Reset the pane split |
 | `Enter` | Switch to the highlighted account |
+| `y` | Copy the highlighted account's full token JSON to the clipboard (Dashboard / Quota) |
 | `1` – `9` | Select an account by number; press Enter to switch |
 | `n` | Refresh and move to the next eligible account |
 | `N` / `Shift+N` | Toggle auto-next when quota drops below threshold |
@@ -268,7 +269,7 @@ In interactive mode, agy-swap can automatically rotate to the next healthy accou
 - **Portable backups:** Metadata exports omit secrets and machine-local vault references. Merge keeps an existing credential when the backup has none. Secret exports use AES-GCM with PBKDF2-HMAC-SHA256 (600,000 iterations); legacy encrypted backups remain readable. Verify and import use the same validation. Imports use a recovery journal; do not delete it after an interrupted restore.
 - **History:** Switch and quota events are local JSONL records with locking and retention. This is not an immutable audit ledger.
 - **Atomic writes:** Configuration writes use advisory file locks (`flock` on Unix, `LockFileEx` on Windows) and write-to-temp-then-rename.
-- **Token handling:** OAuth tokens are scrubbed from CLI logs and terminal output. Tokens can be passed on stdin.
+- **Token handling:** OAuth tokens are scrubbed from CLI logs and terminal output. Tokens can be passed on stdin. Press `y` in Dashboard / Quota, or choose **Copy selected account token** in Actions, to copy the saved token as JSON for `agy-swap add --token -`. Copying does not refresh the token or switch the active account. The clipboard contains credentials, including the refresh token when present. macOS uses `pbcopy`; Windows uses PowerShell `Set-Clipboard`; Linux requires `wl-copy` (Wayland) or `xclip` / `xsel` (X11). An unavailable clipboard produces an error without printing the token.
 - **No telemetry:** The CLI contacts Google for account and quota data and GitHub for releases and updates.
 - **TLS verification:** Verification is enabled by default. Prefer a trusted corporate CA bundle; the explicit insecure option disables certificate authentication.
 

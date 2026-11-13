@@ -21,6 +21,7 @@ type tuiAction struct {
 
 func tuiActions(state *tuiState) []tuiAction {
 	hasAccounts := state != nil && state.accounts != nil && state.accounts.Len() > 0
+	canCopyToken := hasAccounts && (state.view == tuiViewDashboard || state.view == tuiViewQuota) && len(state.visibleEmails()) > 0
 	return []tuiAction{
 		{ID: "dashboard", Label: "Dashboard", Description: "Return to the account dashboard", Shortcut: "g", Section: "Navigate", Enabled: true},
 		{ID: "quota", Label: "Quota overview", Description: "Inspect usage and reset windows", Shortcut: "v", Section: "Navigate", Enabled: hasAccounts},
@@ -38,6 +39,7 @@ func tuiActions(state *tuiState) []tuiAction {
 		{ID: "completion", Label: "Print shell completion", Description: "Generate bash completion for setup", Shortcut: "", Section: "Integrations", Enabled: true},
 		{ID: "add-account", Label: "Add account", Description: "Sign in and save another account", Shortcut: "a", Section: "Accounts", Enabled: true},
 		{ID: "switch-account", Label: "Switch selected account", Description: "Make the selected account active", Shortcut: "enter", Section: "Accounts", Enabled: hasAccounts},
+		{ID: "copy-token", Label: "Copy selected account token", Description: "Copy the full saved OAuth token JSON to the clipboard", Shortcut: "y", Section: "Accounts", Enabled: canCopyToken},
 		{ID: "next-account", Label: "Choose next available", Description: "Pick the next healthy account", Shortcut: "n", Section: "Accounts", Enabled: hasAccounts},
 		{ID: "toggle-auto-next", Label: "Toggle auto-next", Description: "Automatically switch when quota drops below threshold", Shortcut: "N", Section: "Accounts", Enabled: true},
 		{ID: "refresh", Label: "Refresh quota", Description: "Fetch fresh usage from the provider", Shortcut: "r", Section: "Accounts", Enabled: hasAccounts},

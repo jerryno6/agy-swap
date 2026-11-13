@@ -12,6 +12,35 @@ import (
 	"time"
 )
 
+// copyAccountToken reads the latest saved credential without refreshing it or
+// applying it to the active session. Only the clipboard receives the JSON.
+func (a *Application) copyAccountToken(ctx context.Context, email string) error {
+	if a.demo {
+		return errDemoUnavailable
+	}
+	accounts, err := a.store.Load(false)
+	if err != nil {
+		return errors.New("could not load the selected account")
+	}
+	account, ok := accounts.Get(email)
+	if !ok {
+		return errors.New("selected account no longer exists")
+	}
+	token, err := a.accountToken(ctx, account)
+	if err != nil {
+		return errors.New("could not read the selected account token from storage")
+	}
+	decoded := decodeToken(token)
+	if getString(tokenObject(decoded), "access_token") == "" || !tokenMatchesEmail(token, email) {
+		return errors.New("selected account token is invalid or belongs to another account")
+	}
+	data, err := json.Marshal(decoded)
+	if err != nil {
+		return errors.New("could not encode the selected account token")
+	}
+	return writeClipboard(ctx, string(data))
+}
+
 func (a *Application) applyTUIForm(ctx context.Context, state *tuiState) (string, error) {
 	if state == nil || state.form == nil {
 		return "", errors.New("no form is active")
