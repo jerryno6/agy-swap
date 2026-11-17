@@ -41,8 +41,10 @@ func NewDemo(version string, in io.Reader, out, errOut io.Writer, options DemoOp
 			"email": fixture.email, "name": fixture.name,
 			"token_data": token, "token_hash": hashToken(token),
 			"quota_snapshot": map[string]any{
-				"observed_at": now.Format(time.RFC3339),
-				"tier":        map[string]any{"id": "pro-tier", "name": "Pro"},
+				"observed_at":    now.Format(time.RFC3339),
+				"weekly_source":  geminiWeeklySource,
+				"quota_contract": geminiQuotaContract,
+				"tier":           map[string]any{"id": "pro-tier", "name": "Pro"},
 				"groups": []any{map[string]any{
 					"id": "gemini", "name": "Gemini Models",
 					"buckets": []any{
@@ -52,7 +54,7 @@ func NewDemo(version string, in io.Reader, out, errOut io.Writer, options DemoOp
 							"reset_at":           now.Add(time.Duration(i+1) * 8 * time.Hour).Format(time.RFC3339),
 						},
 						map[string]any{
-							"id": "gemini-5h", "name": "5 hours", "window": "5h",
+							"id": "gemini-5h", "name": "5 hours", "window": "5h", "source": geminiFiveHourSource,
 							"remaining_fraction": fixture.remaining * 0.9,
 							"reset_at":           now.Add(time.Duration(i+1) * 2 * time.Hour).Format(time.RFC3339),
 						},

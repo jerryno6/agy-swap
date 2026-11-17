@@ -21,6 +21,10 @@
        (e.g. an extensionless `agy-swap` from `make install`, which Git Bash runs
        first). Those copies are reported, never deleted.
 
+  -SkipBackup preserves existing backups and replaces the installed binary without
+  creating another permanent backup. A running old binary is retired into the
+  temporary build directory until Windows permits cleanup.
+
   Running agy-swap processes keep executing the old binary until restarted.
 
 .EXAMPLE
@@ -33,7 +37,8 @@
 param(
   [string]$BuildId = 'release',
   [string]$TargetDir = (Join-Path $env:LOCALAPPDATA 'Programs\agy-swap'),
-  [switch]$SkipTests
+  [switch]$SkipTests,
+  [switch]$SkipBackup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,19 +74,34 @@ try {
   New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
   $target = Join-Path $TargetDir 'agy-swap.exe'
 
-  if (Test-Path $target) {
-    $oldVersion = 'previous'
-    try {
-      $oldOutput = (& $target version 2>$null) -join ' '
-      if ($oldOutput -match 'v(\d+\.\d+\.\d+)') { $oldVersion = $Matches[1] }
-    } catch { }
-    $backup = "$target.$oldVersion.bak"
-    if (Test-Path $backup) { Remove-Item $backup -Force }
-    Move-Item -Path $target -Destination $backup
-    Write-Host "  ↳ Previous binary kept as $backup" -ForegroundColor Gray
+  $retiredBinary = $null
+  if (Test-Path -LiteralPath $target) {
+    if ($SkipBackup) {
+      $retiredBinary = Join-Path $tmpDir 'replaced-agy-swap.exe'
+      Move-Item -LiteralPath $target -Destination $retiredBinary
+      Write-Host '  ↳ Replacing binary; existing backups kept unchanged.' -ForegroundColor Gray
+    } else {
+      $oldVersion = 'previous'
+      try {
+        $oldOutput = (& $target version 2>$null) -join ' '
+        if ($oldOutput -match 'v(\d+\.\d+\.\d+)') { $oldVersion = $Matches[1] }
+      } catch { }
+      $backup = "$target.$oldVersion.bak"
+      if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
+      Move-Item -LiteralPath $target -Destination $backup
+      Write-Host "  ↳ Previous binary kept as $backup" -ForegroundColor Gray
+    }
   }
 
-  Copy-Item -Path $built -Destination $target -Force
+  try {
+    Copy-Item -LiteralPath $built -Destination $target -Force
+  } catch {
+    if ($retiredBinary -and (Test-Path -LiteralPath $retiredBinary)) {
+      if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+      Move-Item -LiteralPath $retiredBinary -Destination $target
+    }
+    throw
+  }
   Write-Host "✓ Installed $(& $target version) to $target" -ForegroundColor Green
 
   # Report other copies on PATH that a shell could run instead of this one.
@@ -108,5 +128,10 @@ try {
   }
 }
 finally {
-  Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+  $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+  $resolvedBuildDir = [System.IO.Path]::GetFullPath($tmpDir)
+  if (-not $resolvedBuildDir.StartsWith($resolvedTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Refusing cleanup outside the temporary build directory'
+  }
+  Remove-Item -LiteralPath $resolvedBuildDir -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -240,24 +240,27 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 	if len(rawGroups) == 0 {
 		return nil, fmt.Errorf("invalid quota groups for %s", email)
 	}
-	groups := make([]any, 0, minInt(len(rawGroups), 8))
-	for _, rawGroup := range rawGroups[:minInt(len(rawGroups), 8)] {
+	if len(rawGroups) > 128 {
+		return nil, fmt.Errorf("too many quota groups for %s", email)
+	}
+	groups := make([]any, 0, len(rawGroups))
+	currentContract := getString(snapshot, "quota_contract") == geminiQuotaContract
+	for _, rawGroup := range rawGroups {
 		group := getMap(rawGroup)
 		groupID, name := getString(group, "id"), cleanText(getString(group, "name"))
 		source := getString(group, "source")
 		bucketsRaw := getSlice(group["buckets"])
-		if !oneOf(groupID, "gemini", "third_party") || name == "" || len(bucketsRaw) == 0 {
+		isGeminiPool := groupID == "gemini" || strings.HasPrefix(groupID, "gemini_")
+		if !(isGeminiPool || groupID == "third_party") || name == "" || len(bucketsRaw) == 0 {
 			return nil, fmt.Errorf("invalid quota group for %s", email)
 		}
-		bucketLimit := 8
-		if source == "fetchAvailableModels" && groupID == "gemini" {
-			bucketLimit = 128
-			if len(bucketsRaw) > bucketLimit {
-				return nil, fmt.Errorf("too many Gemini model quotas for %s", email)
-			}
+		bucketLimit := 128
+
+		if len(bucketsRaw) > bucketLimit {
+			return nil, fmt.Errorf("too many quota buckets for %s", email)
 		}
-		buckets := make([]any, 0, minInt(len(bucketsRaw), bucketLimit))
-		for _, rawBucket := range bucketsRaw[:minInt(len(bucketsRaw), bucketLimit)] {
+		buckets := make([]any, 0, len(bucketsRaw))
+		for _, rawBucket := range bucketsRaw {
 			bucket := getMap(rawBucket)
 			window := getString(bucket, "window")
 			id, bucketName := cleanText(getString(bucket, "id")), cleanText(getString(bucket, "name"))
@@ -267,17 +270,24 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 			if !validWindow || id == "" || bucketName == "" || !validFraction || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 || resetErr != nil {
 				return nil, fmt.Errorf("invalid quota bucket for %s", email)
 			}
+			if currentContract && isGeminiPool && geminiQuotaPoolID(id, window) != groupID {
+				return nil, fmt.Errorf("invalid quota pool bucket for %s", email)
+			}
 			bucketSource := cleanText(getString(bucket, "source"))
 			modelID := cleanText(getString(bucket, "model_id"))
 			if bucketSource != "" || modelID != "" {
-				if bucketSource != geminiFiveHourSource || groupID != "gemini" || window != "5h" || modelID == "" {
+				currentSummary := bucketSource == geminiFiveHourSource && modelID == ""
+				legacyCatalog := bucketSource == "daily.fetchAvailableModels" && modelID != ""
+				if !isGeminiPool || window != "5h" || !currentSummary && !legacyCatalog || legacyCatalog && groupID != "gemini" {
 					return nil, fmt.Errorf("invalid quota bucket source for %s", email)
 				}
 			}
 			normalizedBucket := map[string]any{"id": id, "name": bucketName, "window": window, "remaining_fraction": fraction, "reset_at": isoTime(reset)}
 			if bucketSource != "" {
 				normalizedBucket["source"] = bucketSource
-				normalizedBucket["model_id"] = modelID
+				if modelID != "" {
+					normalizedBucket["model_id"] = modelID
+				}
 			}
 			if quotaBucketDisabled(bucket) {
 				normalizedBucket["disabled"] = true
@@ -297,6 +307,9 @@ func normalizeQuotaSnapshot(raw any, email string) (map[string]any, error) {
 		groups = append(groups, normalizedGroup)
 	}
 	result := map[string]any{"observed_at": isoTime(observed), "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}
+	if currentContract {
+		result["quota_contract"] = geminiQuotaContract
+	}
 	if getString(snapshot, "weekly_source") == geminiWeeklySource {
 		result["weekly_source"] = geminiWeeklySource
 	}

@@ -1070,7 +1070,7 @@ func rankRecommendations(accounts *Accounts, settings AppSettings, active, profi
 		remaining, known, group := accountRemaining(account, family)
 		wait, waitKnown := accountCooldown(account, now, family)
 		age, ageKnown := quotaAge(account, now)
-		sourceCurrent := !hasLegacyGeminiFiveHour(getMap(account["quota_snapshot"]))
+		sourceCurrent := hasCurrentGeminiQuota(getMap(account["quota_snapshot"]))
 		item := recommendation{Email: email, Name: getString(account, "name"), Remaining: remaining, Family: group, Reasons: []string{}}
 		item.Ready = sourceCurrent && known && ageKnown && age <= 2*time.Minute && (!waitKnown || wait <= 0) && remaining > 0 && remaining >= float64(settings.Policy.MinRemainingPct)
 		if known {

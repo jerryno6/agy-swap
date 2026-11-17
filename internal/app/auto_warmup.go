@@ -5,7 +5,7 @@ import "time"
 // fullGeminiFiveHour requires every explicit Gemini 5h bucket to be exactly
 // full. Do not use display rounding or the legacy daily-window aliases here.
 func fullGeminiFiveHour(snapshot map[string]any) bool {
-	if hasLegacyGeminiFiveHour(snapshot) {
+	if !hasCurrentGeminiQuota(snapshot) {
 		return false
 	}
 	found := false

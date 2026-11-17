@@ -8,10 +8,12 @@ import (
 
 func autoNextQuotaAccount(email string, now time.Time, weekly, fiveHour float64, weeklyReset, fiveHourReset time.Duration) Account {
 	return Account{"email": email, "quota_snapshot": map[string]any{
-		"observed_at": isoTime(now),
+		"observed_at":    isoTime(now),
+		"weekly_source":  geminiWeeklySource,
+		"quota_contract": geminiQuotaContract,
 		"groups": []any{map[string]any{"id": "gemini", "buckets": []any{
-			map[string]any{"window": "weekly", "remaining_fraction": weekly, "reset_at": isoTime(now.Add(weeklyReset))},
-			map[string]any{"window": "5h", "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": fiveHour, "reset_at": isoTime(now.Add(fiveHourReset))},
+			map[string]any{"id": "gemini-weekly", "window": "weekly", "remaining_fraction": weekly, "reset_at": isoTime(now.Add(weeklyReset))},
+			map[string]any{"id": "gemini-5h", "window": "5h", "source": geminiFiveHourSource, "remaining_fraction": fiveHour, "reset_at": isoTime(now.Add(fiveHourReset))},
 		}}},
 	}}
 }
@@ -113,6 +115,24 @@ func TestAutoNextCandidateSafety(t *testing.T) {
 		}},
 		{"missing_observation", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
 			delete(getMap(a["quota_snapshot"]), "observed_at")
+		}},
+		{"missing_weekly_provenance", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			delete(getMap(a["quota_snapshot"]), "weekly_source")
+		}},
+		{"missing_pool_contract", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			delete(getMap(a["quota_snapshot"]), "quota_contract")
+		}},
+		{"misgrouped_argon_weekly", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			getMap(autoNextTestBuckets(a)[0])["id"] = "gemini-argon-wtu-weekly"
+		}},
+		{"legacy_catalog_5h", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			bucket := getMap(autoNextTestBuckets(a)[1])
+			bucket["source"] = "daily.fetchAvailableModels"
+			bucket["model_id"] = "gemini-3.8-flash-tiered"
+		}},
+		{"mixed_catalog_5h", func(a Account, _ *AppSettings, _ map[string]string, _ *AutoNextCandidateOptions) {
+			group := getMap(getSlice(getMap(a["quota_snapshot"])["groups"])[0])
+			group["buckets"] = append(getSlice(group["buckets"]), map[string]any{"window": "5h", "source": "daily.fetchAvailableModels", "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": 1.0, "reset_at": isoTime(now.Add(time.Hour))})
 		}},
 		{"auth_error_case_insensitive", func(_ Account, _ *AppSettings, e map[string]string, _ *AutoNextCandidateOptions) {
 			e["FIRST"] = "auth failed"
@@ -238,10 +258,29 @@ func TestAutoNextFamilyAndGroupResetAggregation(t *testing.T) {
 	if got, ok := SelectAutoNextCandidateEmail(accounts, "active", settings, nil, now); !ok || got != "first" {
 		t.Fatalf("exhausted third-party quota selected %q (%v), want first", got, ok)
 	}
+	// A distinct Gemini pool cannot filter or grant reset bonuses to the primary pool.
+	snapshot["groups"] = append(getSlice(snapshot["groups"]), map[string]any{"id": "gemini_argon_wtu", "name": "Gemini 4 Argon", "buckets": []any{
+		map[string]any{"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.0, "reset_at": isoTime(now.Add(7 * 24 * time.Hour))},
+	}})
+	if triggered, result := CheckAutoNextThreshold(first, now); triggered || !result.Valid {
+		t.Fatalf("Argon pool affected primary Gemini trigger: %+v", result)
+	}
+	if got, ok := SelectAutoNextCandidateEmail(accounts, "active", settings, nil, now); !ok || got != "first" {
+		t.Fatalf("Argon pool affected primary ranking: %q (%v)", got, ok)
+	}
+	argon := getMap(getSlice(getMap(getSlice(snapshot["groups"])[2])["buckets"])[0])
+	argon["remaining_fraction"] = 1.0
+	argon["reset_at"] = isoTime(now.Add(time.Minute))
+	primaryWeekly := getMap(autoNextTestBuckets(first)[0])
+	primaryWeekly["reset_at"] = isoTime(now.Add(7 * 24 * time.Hour))
+	if got, ok := SelectAutoNextCandidateEmail(accounts, "active", settings, nil, now); !ok || got != "second" {
+		t.Fatalf("near Argon reset granted a primary bonus: %q (%v)", got, ok)
+	}
+	primaryWeekly["reset_at"] = isoTime(now.Add(time.Minute))
 	thirdPartyBucket["remaining_fraction"] = 1.0
 	// A duplicate bucket with a later reset must also limit the bonus.
 	group := getMap(getSlice(snapshot["groups"])[0])
-	group["buckets"] = append(getSlice(group["buckets"]), getSlice(thirdParty["buckets"])[0])
+	group["buckets"] = append(getSlice(group["buckets"]), map[string]any{"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 1.0, "reset_at": thirdPartyBucket["reset_at"]})
 	got, ok := SelectAutoNextCandidateWithOptions(accounts, "active", settings, nil, now, AutoNextCandidateOptions{Family: "gemini"})
 	if !ok || getString(got, "email") != "second" {
 		t.Fatalf("duplicate reset selected %q (%v), want second", getString(got, "email"), ok)
@@ -265,9 +304,9 @@ func TestAutoNextMissingWindowsAndMalformedBuckets(t *testing.T) {
 				group := getMap(getSlice(getMap(a["quota_snapshot"])["groups"])[0])
 				group["buckets"] = []any{bucket,
 					map[string]any{"window": "unknown", "remaining_fraction": 0.0, "reset_at": isoTime(now.Add(-time.Hour))},
-					map[string]any{"window": window, "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": 1.1, "reset_at": isoTime(now.Add(time.Minute))},
-					map[string]any{"window": "weekly", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
-					map[string]any{"window": "5h", "source": geminiFiveHourSource, "model_id": "gemini-3.8-flash-tiered", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
+					map[string]any{"id": "gemini-" + window, "window": window, "source": geminiFiveHourSource, "remaining_fraction": 1.1, "reset_at": isoTime(now.Add(time.Minute))},
+					map[string]any{"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
+					map[string]any{"id": "gemini-5h", "window": "5h", "source": geminiFiveHourSource, "remaining_fraction": 0.0, "disabled": true, "reset_at": isoTime(now.Add(time.Minute))},
 				}
 				accounts.Set(email, a)
 			}

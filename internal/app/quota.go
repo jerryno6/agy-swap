@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
-const geminiFiveHourSource = "daily.fetchAvailableModels"
+const geminiFiveHourSource = "daily.retrieveUserQuotaSummary.cli"
 const geminiWeeklySource = "daily.retrieveUserQuotaSummary.cli"
+const geminiQuotaContract = "gemini-pools-v1"
 
 type quotaProgress func(index, total int, account Account, state string)
 
@@ -90,122 +91,79 @@ func (q *QuotaService) Fetch(ctx context.Context, account Account) (map[string]a
 	if tierName == "" {
 		tierName = cleanText(firstString(tier["name"], tierID))
 	}
-	dailyInfo, err := q.http.cloudPost(ctx, access, "loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
-	if err != nil {
-		return nil, fmt.Errorf("resolve daily quota project: %w", err)
-	}
-	dailyProject := strings.TrimSpace(getString(dailyInfo, "cloudaicompanionProject"))
-	if dailyProject == "" {
-		return nil, fmt.Errorf("Google returned no daily Code Assist project")
-	}
-	available, err := q.http.cloudPost(ctx, access, "fetchAvailableModels", map[string]any{"project": dailyProject})
-	if err != nil {
-		return nil, fmt.Errorf("read Gemini 3.8 Flash High quota: %w", err)
-	}
-	fiveHour, err := geminiHighQuotaBucket(available)
-	if err != nil {
-		return nil, err
-	}
 	groups := make([]any, 0)
-	hasWeekly := false
-	var geminiGroup map[string]any
+	pools := make(map[string]map[string]any)
+	seenBuckets := make(map[string]bool)
+	hasWeekly, hasFiveHour := false, false
 	for _, rawGroup := range getSlice(summary["groups"]) {
 		group := getMap(rawGroup)
-		groupID := ""
-		buckets := make([]any, 0)
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
 			id := cleanText(getString(bucket, "bucketId"))
-			if strings.HasPrefix(id, "gemini-") {
-				groupID = "gemini"
-			} else if strings.HasPrefix(id, "3p-") {
-				groupID = "third_party"
+			// Other model families do not participate in Gemini selection or display.
+			if !strings.HasPrefix(id, "gemini-") {
+				continue
 			}
 			window := getString(bucket, "window")
-			if strings.HasPrefix(id, "gemini-") && window == "5h" {
-				if quotaBucketDisabled(bucket) {
-					fiveHour["disabled"] = true
-					fiveHour["description"] = cleanText(getString(bucket, "description"))
-				}
+			poolID := geminiQuotaPoolID(id, window)
+			if poolID == "" {
 				continue
 			}
-			if strings.HasPrefix(id, "gemini-") && window == "weekly" {
-				hasWeekly = true
+			if seenBuckets[id] {
+				return nil, fmt.Errorf("Google returned a duplicate Gemini quota bucket")
 			}
+			seenBuckets[id] = true
 			fraction, ok := getFloat(bucket["remainingFraction"])
+			if !ok || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {
+				return nil, fmt.Errorf("Google returned an invalid Gemini %s quota fraction", window)
+			}
 			reset := getString(bucket, "resetTime")
-			if !oneOf(window, "weekly", "5h") {
-				continue
+			resetTime, resetErr := parseUTC(reset)
+			if resetErr != nil || resetTime.IsZero() {
+				return nil, fmt.Errorf("Google returned an invalid Gemini %s quota reset time", window)
 			}
-			if !ok || reset == "" {
-				return nil, fmt.Errorf("Google returned an invalid quota bucket")
+			normalized := map[string]any{"id": id, "name": cleanText(firstString(bucket["displayName"], window)), "window": window, "remaining_fraction": fraction, "reset_at": reset, "disabled": quotaBucketDisabled(bucket), "description": cleanText(getString(bucket, "description"))}
+			if window == "5h" {
+				normalized["source"] = geminiFiveHourSource
 			}
-			if math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 {
-				return nil, fmt.Errorf("Google returned an invalid quota fraction")
+			if poolID == "gemini" {
+				hasFiveHour = hasFiveHour || window == "5h"
+				hasWeekly = hasWeekly || window == "weekly"
 			}
-			buckets = append(buckets, map[string]any{"id": id, "name": cleanText(firstString(bucket["displayName"], window)), "window": window, "remaining_fraction": fraction, "reset_at": reset, "disabled": quotaBucketDisabled(bucket), "description": cleanText(getString(bucket, "description"))})
-		}
-		if groupID != "" && len(buckets) > 0 {
-			normalized := map[string]any{"id": groupID, "name": cleanText(firstString(group["displayName"], "Model group")), "buckets": buckets, "description": cleanText(getString(group, "description"))}
-			if groupID == "gemini" && geminiGroup == nil {
-				geminiGroup = normalized
+			pool := pools[poolID]
+			if pool == nil {
+				pool = map[string]any{"id": poolID, "name": cleanText(firstString(group["displayName"], poolID)), "buckets": []any{}, "description": cleanText(getString(group, "description"))}
+				pools[poolID] = pool
+				groups = append(groups, pool)
 			}
-			groups = append(groups, normalized)
+			pool["buckets"] = append(getSlice(pool["buckets"]), normalized)
 		}
 	}
-	if !hasWeekly || geminiGroup == nil {
+	if !hasWeekly {
 		return nil, fmt.Errorf("Google returned no Gemini weekly quota")
 	}
-	geminiGroup["buckets"] = append(getSlice(geminiGroup["buckets"]), fiveHour)
-	return normalizeQuotaSnapshot(map[string]any{"observed_at": isoTime(time.Now()), "weekly_source": geminiWeeklySource, "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}, getString(account, "email"))
+	if !hasFiveHour {
+		return nil, fmt.Errorf("Google returned no Gemini five-hour quota")
+	}
+	return normalizeQuotaSnapshot(map[string]any{"observed_at": isoTime(time.Now()), "weekly_source": geminiWeeklySource, "quota_contract": geminiQuotaContract, "tier": map[string]any{"id": tierID, "name": tierName}, "groups": groups}, getString(account, "email"))
 }
 
-// geminiHighQuotaBucket resolves the logical Gemini 3.8 Flash High model to
-// its advertised wire model. Thinking effort shares that wire model's quota.
-func geminiHighQuotaBucket(available map[string]any) (map[string]any, error) {
-	models := getMap(available["models"])
-	mapping, hasMapping := getMap(available["tieredModelIds"])["flash"]
-	var candidates []string
-	if id, ok := mapping.(string); ok && strings.TrimSpace(id) != "" {
-		candidates = append(candidates, id)
-	} else {
-		for _, raw := range getSlice(mapping) {
-			if id, ok := raw.(string); ok && strings.TrimSpace(id) != "" {
-				candidates = append(candidates, id)
-			}
+// geminiQuotaPoolID derives pool identity from wire bucket IDs rather than
+// display names, which may change independently of quota accounting.
+func geminiQuotaPoolID(bucketID, window string) string {
+	if !oneOf(window, "weekly", "5h") || !strings.HasPrefix(bucketID, "gemini-") || !strings.HasSuffix(bucketID, "-"+window) {
+		return ""
+	}
+	stem := strings.TrimSuffix(bucketID, "-"+window)
+	if stem != "gemini" && (!strings.HasPrefix(stem, "gemini-") || strings.HasSuffix(stem, "-") || strings.Contains(stem, "--")) {
+		return ""
+	}
+	for _, char := range stem {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return ""
 		}
 	}
-	if !hasMapping {
-		candidates = []string{"gemini-3.8-flash-tiered", "gemini-3.8-flash-high"}
-	}
-	modelID := ""
-	var model map[string]any
-	for _, id := range candidates {
-		if id != "gemini-3.8-flash-tiered" && id != "gemini-3.8-flash-high" {
-			continue
-		}
-		if candidate := getMap(models[id]); candidate != nil {
-			modelID, model = id, candidate
-			break
-		}
-	}
-	if model == nil {
-		return nil, fmt.Errorf("Gemini 3.8 Flash High is unavailable in the daily model catalog")
-	}
-	quota := getMap(model["quotaInfo"])
-	fraction, ok := getFloat(quota["remainingFraction"])
-	reset := getString(quota, "resetTime")
-	resetTime, resetErr := parseUTC(reset)
-	if !ok || math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction < 0 || fraction > 1 || resetErr != nil || resetTime.IsZero() {
-		return nil, fmt.Errorf("Google returned invalid Gemini 3.8 Flash High quota")
-	}
-	return map[string]any{
-		"id": "gemini-5h", "name": "5 hours", "window": "5h",
-		"remaining_fraction": fraction, "reset_at": reset,
-		"disabled":    quotaBucketDisabled(model) || quotaBucketDisabled(quota),
-		"description": cleanText(getString(model, "description")),
-		"source":      geminiFiveHourSource, "model_id": modelID,
-	}, nil
+	return strings.ReplaceAll(stem, "-", "_")
 }
 
 func hasCurrentGeminiFiveHour(snapshot map[string]any) bool {
@@ -216,7 +174,7 @@ func hasCurrentGeminiFiveHour(snapshot map[string]any) bool {
 		}
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
-			if getString(bucket, "id") == "gemini-5h" && getString(bucket, "window") == "5h" && getString(bucket, "source") == geminiFiveHourSource && oneOf(getString(bucket, "model_id"), "gemini-3.8-flash-tiered", "gemini-3.8-flash-high") {
+			if getString(bucket, "id") == "gemini-5h" && getString(bucket, "window") == "5h" && getString(bucket, "source") == geminiFiveHourSource && getString(bucket, "model_id") == "" {
 				return true
 			}
 		}
@@ -276,11 +234,20 @@ func (q *QuotaService) refreshSelected(ctx context.Context, accounts *Accounts, 
 		}
 		account := accounts.ByEmail[email]
 		cacheDuration := q.CacheTTL()
-		// Old production weekly/5h and catalog-only snapshots must be refreshed
+		// Old production weekly/5h and catalog-based snapshots must be refreshed
 		// even inside TTL; they may belong to a different Google quota rollout.
 		snapshot := getMap(account["quota_snapshot"])
-		cacheComplete := getString(snapshot, "weekly_source") == geminiWeeklySource &&
-			hasCurrentGeminiFiveHour(snapshot) && !hasLegacyGeminiFiveHour(snapshot)
+		cacheComplete := hasCurrentGeminiQuota(snapshot) && hasCurrentGeminiFiveHour(snapshot)
+		hasWeekly := false
+		for _, rawGroup := range getSlice(snapshot["groups"]) {
+			group := getMap(rawGroup)
+			if getString(group, "id") == "gemini" {
+				for _, rawBucket := range getSlice(group["buckets"]) {
+					hasWeekly = hasWeekly || getString(getMap(rawBucket), "window") == "weekly"
+				}
+			}
+		}
+		cacheComplete = cacheComplete && hasWeekly
 		if age, ok := quotaAge(account, now); !force && ok && age < cacheDuration && cacheComplete {
 			if warning := getString(getMap(account["quota_snapshot"]), "warning"); warning != "" {
 				errorsByEmail[email] = warning

@@ -315,7 +315,7 @@ func (h *HTTPService) cloudPost(ctx context.Context, access, method string, body
 }
 
 func (h *HTTPService) cloudQuotaPost(ctx context.Context, access, method string, body any) (map[string]any, error) {
-	// Google gates Gemini weekly buckets on the CLI request identity as well
+	// Google gates Gemini summary buckets on the CLI request identity as well
 	// as the daily endpoint. Keep generation's request identity independent.
 	return h.cloudPostAtWithUserAgent(ctx, h.quotaAPI, access, method, body, "antigravity/cli/1.4.0")
 }

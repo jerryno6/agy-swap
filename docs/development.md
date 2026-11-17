@@ -55,11 +55,11 @@ The Makefile targets need a POSIX shell and build `agy-swap` without the `.exe` 
 # %LOCALAPPDATA%\Programs\agy-swap\agy-swap.exe (same place as install.ps1)
 pwsh -File scripts/install-windows.ps1
 
-# Options: -SkipTests, -BuildId dev, -TargetDir <dir>
+# Options: -SkipTests, -SkipBackup, -BuildId dev, -TargetDir <dir>
 pwsh -File scripts/install-windows.ps1 -SkipTests
 ```
 
-Keep a single install location. The previous binary is kept as `agy-swap.exe.<old-version>.bak`. The script warns about other `agy-swap` copies on PATH (for example an extensionless `agy-swap` from `make install`, which Git Bash runs first) but never deletes them. A running agy-swap TUI does not block the install (the old exe is renamed), but it keeps running the old version until restarted. Run the other checks directly with `go test ./...` and `go vet ./...`.
+Keep a single install location. The previous binary is kept as `agy-swap.exe.<old-version>.bak`. Pass `-SkipBackup` to preserve existing backups and replace the installed binary without creating another permanent backup. The script warns about other `agy-swap` copies on PATH (for example an extensionless `agy-swap` from `make install`, which Git Bash runs first) but never deletes them. A running agy-swap TUI does not block the install (the old exe is renamed), but it keeps running the old version until restarted. Run the other checks directly with `go test ./...` and `go vet ./...`.
 
 ---
 

@@ -891,10 +891,9 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 	if actionStr != "" {
 		rows = append(rows, tuiDetailKV("ACTION", a.p.White+actionStr+a.p.Reset, width, labelWidth, a.p))
 	}
-	// Gemini 3.8 High is the account-selection target. Its shared weekly
+	// Gemini is the account-selection target. Its server-provided weekly
 	// and five-hour limits take priority over token and diagnostic details.
-	rows = append(rows, a.p.Bold+a.p.Blue+"GEMINI MODELS"+a.p.Reset,
-		a.tuiSecondary("Gemini 3.8 High"))
+	rows = append(rows, a.p.Bold+a.p.Blue+"GEMINI MODELS"+a.p.Reset)
 	weekly, fiveHour, _ := geminiQuotaBuckets(account)
 	valueWidth := maxInt(8, width-labelWidth-3)
 	for _, item := range []struct {
@@ -916,6 +915,29 @@ func (a *Application) tuiDetailTableLines(state *tuiState, width, maxRows int) [
 		}
 		rows = append(rows, tuiDetailKV(item.label, value, width, labelWidth, a.p))
 	}
+	// Auxiliary pools retain their own windows; a weekly-only pool never
+	// borrows the primary Gemini five-hour bucket.
+	for _, rawGroup := range auxiliaryGeminiQuotaGroups(account) {
+		group := getMap(rawGroup)
+		rows = append(rows, "", a.p.Bold+a.p.Blue+strings.ToUpper(tuiText(getString(group, "name")))+a.p.Reset)
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			label := "Weekly Limit"
+			if getString(bucket, "window") == "5h" {
+				label = "Five Hour Limit"
+			}
+			value := "Disabled"
+			if quotaBucketDisabled(bucket) {
+				if description := cleanText(getString(bucket, "description")); description != "" {
+					value += " · " + description
+				}
+			} else {
+				value = formatQuotaBarResponsive(bucket, a.p, now, tuiQuotaBarWidth(valueWidth), valueWidth)
+			}
+			rows = append(rows, tuiDetailKV(label, value, width, labelWidth, a.p))
+		}
+	}
+
 	if len(quotaGroups(account)) == 0 {
 		for _, limit := range activeLimits(account, now) {
 			valueWidth := maxInt(8, width-labelWidth-3)
@@ -993,7 +1015,7 @@ func (a *Application) tuiDetailLines(state *tuiState, width, maxRows int) []stri
 		compact := make([]string, 0, len(rows))
 		for _, row := range rows {
 			plain := ansiPattern.ReplaceAllString(row, "")
-			if strings.TrimSpace(plain) == "SELECTED ACCOUNT" || strings.Trim(plain, "─ ") == "" {
+			if strings.TrimSpace(plain) == "SELECTED ACCOUNT" || strings.TrimSpace(plain) != "" && strings.Trim(plain, "─ ") == "" {
 				continue
 			}
 			compact = append(compact, row)

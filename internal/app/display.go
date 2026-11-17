@@ -261,36 +261,62 @@ func geminiQuotaBuckets(account Account) (weekly, daily geminiBucketQuota, found
 			window := strings.ToLower(cleanText(getString(bucket, "window")))
 			id := strings.ToLower(cleanText(getString(bucket, "id")))
 
-			if window == "weekly" || strings.Contains(id, "weekly") || strings.Contains(window, "week") {
-				weekly.disabled = quotaBucketDisabled(bucket)
-				weekly.description = getString(bucket, "description")
-				weekly.fraction = fraction
-				weekly.resetAt = resetAt
-				weekly.found = true
+			if id == "gemini-weekly" && window == "weekly" {
+				weekly = geminiBucketQuota{fraction: fraction, resetAt: resetAt, found: true, disabled: quotaBucketDisabled(bucket), description: getString(bucket, "description")}
 				found = true
-			} else if window == "5h" || strings.Contains(id, "5h") || strings.Contains(window, "5h") ||
-				window == "daily" || strings.Contains(id, "daily") || strings.Contains(window, "day") {
-				priority := 0
-				if window == "5h" {
-					priority = 1
-					if getString(bucket, "source") == geminiFiveHourSource && cleanText(getString(bucket, "model_id")) != "" {
-						priority = 2
-					}
+			} else if id == "gemini-5h" && window == "5h" {
+				priority := 1
+				if getString(bucket, "source") == geminiFiveHourSource && cleanText(getString(bucket, "model_id")) == "" {
+					priority = 2
 				}
 				if priority < dailyPriority {
 					continue
 				}
 				dailyPriority = priority
-				daily.disabled = quotaBucketDisabled(bucket)
-				daily.description = getString(bucket, "description")
-				daily.fraction = fraction
-				daily.resetAt = resetAt
-				daily.found = true
+				daily = geminiBucketQuota{fraction: fraction, resetAt: resetAt, found: true, disabled: quotaBucketDisabled(bucket), description: getString(bucket, "description")}
 				found = true
 			}
 		}
 	}
 	return weekly, daily, found
+}
+
+// auxiliaryGeminiQuotaGroups retains separate server pools for details, including
+// older snapshots whose groups all used the Gemini family ID.
+func auxiliaryGeminiQuotaGroups(account Account) []any {
+	var groups []any
+	byPool := make(map[string]map[string]any)
+	for _, rawGroup := range quotaGroups(account) {
+		group := getMap(rawGroup)
+		groupID := getString(group, "id")
+		if groupID != "gemini" && !strings.HasPrefix(groupID, "gemini_") {
+			continue
+		}
+		hasPrimary := false
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			hasPrimary = hasPrimary || geminiQuotaPoolID(getString(bucket, "id"), getString(bucket, "window")) == "gemini"
+		}
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			pool := geminiQuotaPoolID(getString(bucket, "id"), getString(bucket, "window"))
+			if pool == "" || pool == "gemini" {
+				continue
+			}
+			aux := byPool[pool]
+			if aux == nil {
+				name := cleanText(getString(group, "name"))
+				if name == "" || hasPrimary {
+					name = strings.ReplaceAll(pool, "_", " ")
+				}
+				aux = map[string]any{"id": pool, "name": name, "buckets": []any{}}
+				byPool[pool] = aux
+				groups = append(groups, aux)
+			}
+			aux["buckets"] = append(getSlice(aux["buckets"]), bucket)
+		}
+	}
+	return groups
 }
 
 func formatHealthResetWeekly(resetAt time.Time, now time.Time) string {
@@ -440,6 +466,9 @@ func quotaGroupHealths(account Account) []quotaGroupHealth {
 		}
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
+			if health.id == "gemini" && geminiQuotaPoolID(getString(bucket, "id"), getString(bucket, "window")) != "gemini" {
+				continue
+			}
 			if quotaBucketDisabled(bucket) {
 				continue
 			}
@@ -499,7 +528,13 @@ func limitedQuotaGroupLabels(groups []quotaGroupHealth) []string {
 }
 
 func accountStatus(account Account, p palette, now time.Time) string {
-	return accountStatusForGroups(account, p, now, quotaGroupHealths(account))
+	var primary []quotaGroupHealth
+	for _, group := range quotaGroupHealths(account) {
+		if group.id == selectionQuotaFamily {
+			primary = append(primary, group)
+		}
+	}
+	return accountStatusForGroups(account, p, now, primary)
 }
 
 func accountStatusForGroups(account Account, p palette, now time.Time, groups []quotaGroupHealth) string {
@@ -609,7 +644,7 @@ func formatQuotaBar(bucket map[string]any, p palette, now time.Time, width int) 
 		}
 		reset += " (" + at.In(now.Location()).Format("Mon 02 Jan 15:04 -0700") + ")"
 	}
-	return fmt.Sprintf("[%s] %6.2f%% remaining%s", bar, quotaPercent(fraction, 2), reset)
+	return fmt.Sprintf("[%s] %s%6.2f%%%s remaining%s", bar, color, quotaPercent(fraction, 2), p.Reset, reset)
 }
 
 // formatQuotaBarResponsive keeps the value and reset window visible when a
@@ -636,7 +671,7 @@ func formatQuotaBarResponsive(bucket map[string]any, p palette, now time.Time, w
 			remaining = "due"
 		}
 	}
-	full := fmt.Sprintf("[%s] %.2f%% remaining", bar, quotaPercent(fraction, 2))
+	full := fmt.Sprintf("[%s] %s%.2f%%%s remaining", bar, color, quotaPercent(fraction, 2), p.Reset)
 	if remaining != "" {
 		full += " · resets in " + remaining
 	}
@@ -652,16 +687,16 @@ func formatQuotaBarResponsive(bucket map[string]any, p palette, now time.Time, w
 			short = strings.Join(fields[:2], " ")
 		}
 		for _, candidate := range []string{
-			fmt.Sprintf("[%s] %.1f%% · %s", bar, quotaPercent(fraction, 1), short),
-			fmt.Sprintf("[%s] %.0f%% · %s", bar, quotaPercent(fraction, 0), short),
-			fmt.Sprintf("[%s] %.0f%% · %s", bar, quotaPercent(fraction, 0), fields[0]),
+			fmt.Sprintf("[%s] %s%.1f%%%s · %s", bar, color, quotaPercent(fraction, 1), p.Reset, short),
+			fmt.Sprintf("[%s] %s%.0f%%%s · %s", bar, color, quotaPercent(fraction, 0), p.Reset, short),
+			fmt.Sprintf("[%s] %s%.0f%%%s · %s", bar, color, quotaPercent(fraction, 0), p.Reset, fields[0]),
 		} {
 			if visibleWidth(candidate) <= maxWidth {
 				return candidate
 			}
 		}
 	}
-	return fmt.Sprintf("[%s] %.0f%%", bar, quotaPercent(fraction, 0))
+	return fmt.Sprintf("[%s] %s%.0f%%%s", bar, color, quotaPercent(fraction, 0), p.Reset)
 }
 
 func formatCooldownBar(limit map[string]any, p palette, now time.Time, width int) string {

@@ -63,9 +63,8 @@ func CheckAutoNextThreshold(account Account, now time.Time) (bool, AutoNextThres
 	return CheckAutoNextThresholdWithLimits(account, now, AutoNextWeeklyThreshold, AutoNext5hThreshold)
 }
 
-// hasLegacyGeminiFiveHour rejects production and pre-migration 5h data while
-// leaving weekly-only snapshots usable. Mixed legacy/canonical buckets also
-// fail closed so automation cannot accidentally rank by the wrong window.
+// hasLegacyGeminiFiveHour identifies 5h data from before the summary contract.
+// Keep legacy snapshots readable, but do not use them for automatic decisions.
 func hasLegacyGeminiFiveHour(snapshot map[string]any) bool {
 	for _, rawGroup := range getSlice(snapshot["groups"]) {
 		group := getMap(rawGroup)
@@ -75,12 +74,45 @@ func hasLegacyGeminiFiveHour(snapshot map[string]any) bool {
 		for _, rawBucket := range getSlice(group["buckets"]) {
 			bucket := getMap(rawBucket)
 			if strings.ToLower(strings.TrimSpace(getString(bucket, "window"))) == "5h" &&
-				(getString(bucket, "source") != geminiFiveHourSource || strings.TrimSpace(getString(bucket, "model_id")) == "") {
+				(getString(bucket, "source") != geminiFiveHourSource || strings.TrimSpace(getString(bucket, "model_id")) != "") {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// hasCurrentGeminiQuota requires all present quota windows to use the summary
+// contract. Partial snapshots retain their existing scoring behavior.
+// Cache reuse and automatic decisions share this check; callers
+// retain their existing validation of fractions, resets and observations.
+func hasCurrentGeminiQuota(snapshot map[string]any) bool {
+	if getString(snapshot, "quota_contract") != geminiQuotaContract || getString(snapshot, "weekly_source") != geminiWeeklySource || hasLegacyGeminiFiveHour(snapshot) {
+		return false
+	}
+	foundPrimary := false
+	for _, rawGroup := range getSlice(snapshot["groups"]) {
+		group := getMap(rawGroup)
+		poolID := getString(group, "id")
+		if poolID != selectionQuotaFamily && !strings.HasPrefix(poolID, "gemini_") {
+			continue
+		}
+		for _, rawBucket := range getSlice(group["buckets"]) {
+			bucket := getMap(rawBucket)
+			window := getString(bucket, "window")
+			if !oneOf(window, "weekly", "5h") {
+				continue
+			}
+			if geminiQuotaPoolID(getString(bucket, "id"), window) != poolID {
+				return false
+			}
+			if window == "5h" && (getString(bucket, "source") != geminiFiveHourSource || getString(bucket, "model_id") != "") {
+				return false
+			}
+			foundPrimary = foundPrimary || poolID == selectionQuotaFamily
+		}
+	}
+	return foundPrimary
 }
 
 // CheckAutoNextThresholdWithLimits evaluates whether an account's quota has dropped strictly below the
@@ -100,7 +132,7 @@ func CheckAutoNextThresholdWithLimits(account Account, now time.Time, weeklyThre
 		return false, res
 	}
 	snapshot := getMap(account["quota_snapshot"])
-	if snapshot == nil || hasLegacyGeminiFiveHour(snapshot) {
+	if !hasCurrentGeminiQuota(snapshot) {
 		return false, res
 	}
 	observedStr := getString(snapshot, "observed_at")
@@ -198,7 +230,7 @@ func isSnapshotFresh(account Account, now time.Time) bool {
 		return false
 	}
 	snapshot := getMap(account["quota_snapshot"])
-	if snapshot == nil || hasLegacyGeminiFiveHour(snapshot) {
+	if !hasCurrentGeminiQuota(snapshot) {
 		return false
 	}
 	observedStr := getString(snapshot, "observed_at")
